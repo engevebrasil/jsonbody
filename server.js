@@ -2,8 +2,12 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
-const { Client, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth, List, Buttons } = require('whatsapp-web.js');
 const fs = require('fs');
+const low = require('lowdb');
+const FileSync = require('lowdb/adapters/FileSync');
+const PDFDocument = require('pdfkit');
+const axios = require('axios');
 
 // Configuração do Express
 const app = express();
@@ -13,371 +17,263 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// Inicialização do cliente WhatsApp
+// Configuração do banco de dados
+const adapter = new FileSync('db.json');
+const db = low(adapter);
+db.defaults({ pedidos: [], clientes: {} }).write();
+
+// Configuração do cliente WhatsApp
 const client = new Client({
-    puppeteer: {
+    authStrategy: new LocalAuth(),
+    puppeteer: { 
+        headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
 });
 
-let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null} }
-
+// Cardápio Premium
 const cardapio = {
     lanches: [
-        { id: 1, nome: "🍔 Smash Burger Clássico", preco: 20.00 },
-        { id: 2, nome: "🥗 Smash! Salada", preco: 23.00 },
-        { id: 3, nome: "🥓 Salada Bacon", preco: 27.00 },
-        { id: 4, nome: "🍔🍔🍔 Smash!! Triple", preco: 28.00 },
-        { id: 5, nome: "🍔🥓 Smash Burger Bacon", preco: 29.99 },
-        { id: 6, nome: "🍔🍖️ Burger Calabacon", preco: 32.99 }
+        { id: 1, nome: "🍔 Smash Burger Clássico", preco: 20.00, descricao: "180g, queijo cheddar, molho especial" },
+        { id: 2, nome: "🥗 Smash! Salada", preco: 23.00, descricao: "180g, mix de folhas, tomate cereja" },
+        { id: 3, nome: "🥓 Salada Bacon", preco: 27.00, descricao: "180g, bacon crocante, cebola caramelizada" },
+        { id: 4, nome: "🍔🍔🍔 Smash!! Triple", preco: 28.00, descricao: "3 hambúrgueres de 120g, triplo queijo" },
+        { id: 5, nome: "🍔🥓 Smash Burger Bacon", preco: 29.99, descricao: "180g, bacon, cebola crispy" },
+        { id: 6, nome: "🍔🍖️ Burger Calabacon", preco: 32.99, descricao: "180g, calabresa, bacon, pimenta jalapeño" }
     ],
     bebidas: [
         { id: 7, nome: "🥤 Coca-Cola 2L", preco: 12.00 },
         { id: 8, nome: "🥤 Poty Guaraná 2L", preco: 10.00 },
         { id: 9, nome: "🥤 Coca-Cola Lata", preco: 6.00 },
         { id: 10, nome: "🥤 Guaraná Lata", preco: 6.00 }
+    ],
+    combos: [
+        { id: 11, nome: "🔥 Combo Família", preco: 89.90, descricao: "3 Smash Clássico + 2 Coca 2L" },
+        { id: 12, nome: "⚡ Combo Turbo", preco: 49.90, descricao: "Smash Triple + Coca Lata" }
+    ],
+    sobremesas: [
+        { id: 13, nome: "🍦 Casquinha", preco: 8.00 },
+        { id: 14, nome: "🍰 Brownie", preco: 12.00 }
     ]
 };
 
-// Caminho relativo para o PDF (dentro da pasta public)
-const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
-
-// Funções auxiliares
-function formatarTroco(troco) {
-    if (troco.toLowerCase() === 'não' || troco.toLowerCase() === 'nao') {
-        return 'não';
-    }
-    const numeros = troco.replace(/[^\d,.]/g, '').replace('.', ',');
-    const partes = numeros.split(',');
-    let inteiro = partes[0] || '0';
-    let centavos = partes[1] ? partes[1].padEnd(2, '0').slice(0, 2) : '00';
-    return `R$ ${inteiro},${centavos}`;
-}
-
-function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) {
-    const total = itens.reduce((sum, item) => sum + item.preco, 0);
-    const taxaEntrega = total * 0.1;
-    const subtotal = total - taxaEntrega;
-    const now = new Date();
+// Funções Premium
+async function enviarMenuInterativo(sender) {
+    const sections = [{
+        title: "CATEGORIAS",
+        rows: [
+            { id: "lanches", title: "🍔 LANCHES", description: "Nossos hambúrgueres artesanais" },
+            { id: "bebidas", title: "🥤 BEBIDAS", description: "Refrigerantes e sucos" },
+            { id: "combos", title: "🔥 COMBOS", description: "Combos econômicos" },
+            { id: "sobremesas", title: "🍰 SOBREMESAS", description: "Doces para finalizar" },
+            { id: "carrinho", title: "🛒 MEU CARRINHO", description: "Ver itens selecionados" }
+        ]
+    }];
     
-    let cupom = `SMASH BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n\n`;
+    const list = new List(
+        '🌟 MENU PRINCIPAL 🌟\nSelecione uma categoria:',
+        'Navegação',
+        sections,
+        'Cardápio Premium'
+    );
+    
+    await client.sendMessage(sender, list);
+}
 
-    cupom += "ITENS:\n";
-    itens.forEach(item => {
-        cupom += `${item.id}. ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
-    });
+async function enviarCategoria(sender, categoria) {
+    if (!cardapio[categoria]) return;
+    
+    const rows = cardapio[categoria].map(item => ({
+        id: `item_${item.id}`,
+        title: `${item.nome} - R$ ${item.preco.toFixed(2)}`,
+        description: item.descricao || ''
+    }));
+    
+    const sections = [{ title: categoria.toUpperCase(), rows }];
+    
+    const list = new List(
+        `📋 ${categoria.toUpperCase()}\nSelecione um item:`,
+        'Itens',
+        sections,
+        'Adicionar ao carrinho'
+    );
+    
+    await client.sendMessage(sender, list);
+}
 
-    cupom += `\nSubtotal: R$ ${subtotal.toFixed(2).replace('.', ',')}`;
-    cupom += `\nTaxa de Entrega (10%): R$ ${taxaEntrega.toFixed(2).replace('.', ',')}`;
-    cupom += `\nTOTAL: R$ ${total.toFixed(2).replace('.', ',')}\n`;
-    cupom += `\nENDEREÇO:\n${endereco}\n`;
-    cupom += `\nFORMA DE PAGAMENTO:\n${formaPagamento}\n`;
-
-    if (formaPagamento === "1. Dinheiro 💵" && troco) {
-        cupom += `\nTroco para: ${formatarTroco(troco)}`;
+async function mostrarCarrinho(sender, carrinho) {
+    if (carrinho.itens.length === 0) {
+        await client.sendMessage(sender, '🛒 Seu carrinho está vazio!');
+        return;
     }
-
-    return cupom;
-}
-
-function mostrarCardapio() {
-    let msg = "🌟 *CARDÁPIO DOKA BURGER* 🌟\n\n";
-    msg += "══════════════════════════\n";
-    msg += "🍔 *LANCHES*\n";
-    msg += "══════════════════════════\n";
-    cardapio.lanches.forEach(item => {
-        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+    
+    let message = '🛒 *SEU CARRINHO*\n\n';
+    carrinho.itens.forEach((item, index) => {
+        message += `${index + 1}. ${item.nome} - R$ ${item.preco.toFixed(2)}\n`;
     });
+    
+    const total = carrinho.itens.reduce((sum, item) => sum + item.preco, 0);
+    message += `\n💵 *TOTAL: R$ ${total.toFixed(2)}*`;
+    
+    const buttons = new Buttons(
+        message,
+        [
+            { id: 'finalizar', body: '✅ FINALIZAR COMPRA' },
+            { id: 'adicionar', body: '➕ ADICIONAR MAIS' },
+            { id: 'remover', body: '➖ REMOVER ITEM' },
+            { id: 'cancelar', body: '❌ CANCELAR' }
+        ],
+        'Opções do Carrinho',
+        'Selecione uma ação:'
+    );
+    
+    await client.sendMessage(sender, buttons);
+}
 
-    msg += "\n══════════════════════════\n";
-    msg += "🥤 *BEBIDAS*\n";
-    msg += "══════════════════════════\n";
-    cardapio.bebidas.forEach(item => {
-        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+async function enviarLocalizacao(sender) {
+    await client.sendMessage(sender, 'Por favor, compartilhe sua localização:');
+}
+
+async function enviarConfirmacaoPedido(sender, pedido) {
+    const buttons = new Buttons(
+        `✅ PEDIDO #${pedido.id} CONFIRMADO!\n\nTempo estimado: 40-50 minutos`,
+        [
+            { id: 'status', body: '🔄 STATUS DO PEDIDO' },
+            { id: 'novo', body: '🆕 NOVO PEDIDO' },
+            { id: 'ajuda', body: '❓ AJUDA' }
+        ],
+        'Acompanhamento',
+        'O que deseja fazer?'
+    );
+    
+    await client.sendMessage(sender, buttons);
+}
+
+async function enviarPDFCardapio(sender) {
+    try {
+        const response = await axios.get('https://exemplo.com/cardapio-premium.pdf', {
+            responseType: 'arraybuffer'
+        });
+        
+        const media = new MessageMedia(
+            'application/pdf',
+            response.data.toString('base64'),
+            'cardapio_premium.pdf'
+        );
+        
+        await client.sendMessage(sender, media, {
+            caption: '📄 *Cardápio Premium Atualizado*'
+        });
+    } catch (e) {
+        await client.sendMessage(sender, '⚠️ Cardápio temporariamente indisponível');
+    }
+}
+
+// Gerar PDF profissional para o pedido
+async function gerarPDFPedido(pedido) {
+    const doc = new PDFDocument();
+    const filename = path.join(__dirname, 'pedidos', `pedido_${pedido.id}.pdf`);
+    
+    doc.pipe(fs.createWriteStream(filename));
+    
+    // Cabeçalho
+    doc.image(path.join(__dirname, 'assets', 'logo.png'), 50, 45, { width: 100 });
+    doc.fontSize(20).text('DOKA BURGER PREMIUM', 200, 50, { align: 'center' });
+    doc.fontSize(12).text(`Pedido: #${pedido.id}`, 200, 85, { align: 'center' });
+    doc.fontSize(10).text(`Data: ${new Date().toLocaleString('pt-BR')}`, 200, 100, { align: 'center' });
+    
+    // Linha divisória
+    doc.moveTo(50, 120).lineTo(550, 120).stroke();
+    
+    // Itens
+    doc.fontSize(14).text('ITENS:', 50, 140);
+    let y = 160;
+    pedido.itens.forEach(item => {
+        doc.text(`• ${item.nome} - R$ ${item.preco.toFixed(2)}`, 60, y);
+        y += 20;
     });
-
-    msg += "\n══════════════════════════\n";
-    msg += "🔢 Digite o *NÚMERO* do item desejado:";
-    return msg;
+    
+    // Totais
+    doc.moveTo(50, y).lineTo(550, y).stroke();
+    y += 20;
+    doc.text(`Subtotal: R$ ${pedido.subtotal.toFixed(2)}`, 400, y);
+    y += 20;
+    doc.text(`Taxa de Entrega: R$ ${pedido.taxa.toFixed(2)}`, 400, y);
+    y += 20;
+    doc.font('Helvetica-Bold').text(`TOTAL: R$ ${pedido.total.toFixed(2)}`, 400, y);
+    
+    // Informações cliente
+    doc.moveTo(50, y + 30).lineTo(550, y + 30).stroke();
+    doc.font('Helvetica').text('CLIENTE:', 50, y + 50);
+    doc.text(`Nome: ${pedido.cliente.nome}`, 60, y + 70);
+    doc.text(`Telefone: ${pedido.cliente.telefone}`, 60, y + 90);
+    doc.text(`Endereço: ${pedido.endereco}`, 60, y + 110);
+    doc.text(`Pagamento: ${pedido.pagamento}`, 60, y + 130);
+    
+    doc.end();
+    return filename;
 }
 
-function mostrarOpcoes() {
-    return "✨ *O QUE DESEJA FAZER?* ✨\n\n" +
-           "══════════════════════════\n" +
-           "1️⃣  Adicionar mais itens\n" +
-           "2️⃣  Finalizar compra\n" +
-           "3️⃣  Cancelar pedido\n" +
-           "4️⃣  Falar com atendente\n" +
-           "5️⃣  📄 Ver Cardápio (PDF)\n" +
-           "══════════════════════════\n" +
-           "🔢 Digite o número da opção:";
-}
-
-// Eventos do WhatsApp - ATUALIZADO PARA QR CODE MELHOR
+// Eventos do WhatsApp
 client.on('qr', qr => {
-    // QR code no terminal (compacto)
     qrcode.generate(qr, { small: true });
-    
-    // Link alternativo para escaneamento
-    const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&data=${encodeURIComponent(qr)}`;
-    console.log('\n📢 QR Code alternativo (caso não consiga ler acima):');
-    console.log(qrLink);
-    console.log('⏳ Válido por 60 segundos\n');
+    console.log('📢 QR Code gerado! Escaneie com o WhatsApp');
 });
 
 client.on('ready', () => {
-    console.log('🤖 Bot pronto e operacional!');
-    console.log(`🕒 Última inicialização: ${new Date().toLocaleTimeString()}`);
+    console.log('🚀 BOT PREMIUM OPERACIONAL!');
+    console.log(`⏱️ ${new Date().toLocaleString('pt-BR')}`);
 });
 
 client.on('message', async message => {
-    const text = message.body.trim();
     const sender = message.from;
-    const agora = Date.now();
-
-    if (!carrinhos[sender]) {
-        carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: 0, atendenteTimer: null };
+    const text = message.body.trim();
+    
+    // Inicializar carrinho
+    if (!db.get(`clientes.${sender}`).value()) {
+        db.set(`clientes.${sender}`, { 
+            carrinho: { itens: [], estado: 'inicio' },
+            historico: []
+        }).write();
     }
-
-    if (carrinhos[sender].atendenteTimer && (agora - carrinhos[sender].atendenteTimer < 600000)) {
-        return;
-    } else if (carrinhos[sender].atendenteTimer) {
-        carrinhos[sender].atendenteTimer = null;
-        carrinhos[sender].estado = "opcoes";
-        await client.sendMessage(sender, "⏳ *O período de atendimento humano terminou*\nComo posso ajudar?");
-        await client.sendMessage(sender, mostrarOpcoes());
-        return;
-    }
-
-    if (text.toLowerCase() === 'cliente') {
-        carrinhos[sender] = { itens: [], estado: "escolhendo", ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, atendenteTimer: null };
-        await client.sendMessage(sender, "🔄 *Reiniciando seu pedido...*");
-        await client.sendMessage(sender, mostrarCardapio());
-        return;
-    }
-
-    if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
-        carrinhos[sender].estado = "opcoes";
-        await client.sendMessage(sender, "👋 *Bem-vindo ao DOKA Burger!*");
-        await client.sendMessage(sender, mostrarOpcoes());
+    
+    const cliente = db.get(`clientes.${sender}`).value();
+    const carrinho = cliente.carrinho;
+    
+    // Processar localização
+    if (message.location) {
+        const location = message.location;
+        carrinho.endereco = `Lat: ${location.latitude}, Long: ${location.longitude}`;
+        db.update(`clientes.${sender}`, c => c).write();
+        await client.sendMessage(sender, '📍 Localização recebida! Agora escolha a forma de pagamento:');
+        await enviarOpcoesPagamento(sender);
         return;
     }
-
-    if (text === '5' || text.toLowerCase().includes('cardapio')) {
-        if (fs.existsSync(PDF_PATH)) {
-            const media = MessageMedia.fromFilePath(PDF_PATH);
-            await client.sendMessage(sender, media, { caption: '📄 *Cardápio Completo Smash Burger!*' });
-            carrinhos[sender].ultimoEnvioPdf = agora;
-        } else {
-            await client.sendMessage(sender, "⚠️ *Cardápio temporariamente indisponível.*");
-        }
-        
-        if (carrinhos[sender].estado === "escolhendo") {
-            await client.sendMessage(sender, mostrarCardapio());
-        } else {
-            await client.sendMessage(sender, mostrarOpcoes());
-        }
-        return;
-    }
-
-    if (carrinhos[sender].estado === "escolhendo") {
-        const numeroItem = parseInt(text);
-        const todosItens = [...cardapio.lanches, ...cardapio.bebidas];
-        const itemSelecionado = todosItens.find(item => item.id === numeroItem);
-
-        if (itemSelecionado) {
-            carrinhos[sender].itens.push(itemSelecionado);
-            carrinhos[sender].estado = "opcoes";
-            await client.sendMessage(sender, 
-                `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n` +
-                `💰 Valor: R$ ${itemSelecionado.preco.toFixed(2).replace('.', ',')}\n\n` + 
-                mostrarOpcoes()
-            );
-        } else {
-            await client.sendMessage(sender, 
-                "❌ *Item não encontrado!*\n\n" +
-                "🔢 Por favor, digite apenas o número do item conforme o cardápio:"
-            );
-            await client.sendMessage(sender, mostrarCardapio());
-        }
-        return;
-    }
-
-    if (carrinhos[sender].estado === "opcoes") {
-        switch (text) {
-            case "1":
-                carrinhos[sender].estado = "escolhendo";
-                await client.sendMessage(sender, "📝 *Adicionando mais itens...*");
-                await client.sendMessage(sender, mostrarCardapio());
-                break;
-
-            case "2":
-                if (carrinhos[sender].itens.length === 0) {
-                    await client.sendMessage(sender, "🛒 *Seu carrinho está vazio!*\nAdicione itens antes de finalizar.");
-                    return;
-                }
-                carrinhos[sender].estado = "aguardando_endereco";
-                await client.sendMessage(sender,
-                    "🏠 *INFORME SEU ENDEREÇO*\n\n" +
-                    "Por favor, envie:\n" +
-                    "📍 Rua, Número\n" +
-                    "🏘️ Bairro\n" +
-                    "📌 Ponto de referência\n\n" +
-                    "Exemplo:\n" +
-                    "👉 Rua das Flores, 123\n" +
-                    "👉 Centro\n" +
-                    "👉 Próximo ao mercado"
-                );
-                break;
-
-            case "3":
-                carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, atendenteTimer: null };
-                await client.sendMessage(sender, "🗑️ *Pedido cancelado com sucesso!*\nVolte sempre!");
-                break;
-                
-            case "4":
-                carrinhos[sender].atendenteTimer = Date.now();
-                await client.sendMessage(sender,
-                    "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\n\n" +
-                    "Você será atendido por um de nossos especialistas em hambúrgueres!\n\n" +
-                    "⏳ Tempo de atendimento: 10 minutos\n" +
-                    "⏰ Após esse período, retornaremos ao modo automático"
-                );
-                break;
-
-            default:
-                await client.sendMessage(sender, 
-                    "⚠️ *OPÇÃO INVÁLIDA!*\n\n" +
-                    "Por favor, escolha uma das opções abaixo:"
-                );
-                await client.sendMessage(sender, mostrarOpcoes());
-                break;
-        }
-        return;
-    }
-
-    if (carrinhos[sender].estado === "aguardando_endereco") {
-        if (text.length < 10) {
-            await client.sendMessage(sender, "📢 *Endereço incompleto!*\nPor favor, informe rua, número e bairro.");
-            return;
-        }
-        carrinhos[sender].endereco = text;
-        
-        await client.sendMessage(sender,
-            "💳 *FORMA DE PAGAMENTO* 💳\n\n" +
-            "1. Dinheiro 💵\n" +
-            "2. PIX 📱\n" +
-            "3. Cartão 💳\n\n" +
-            "🔢 Digite o número da opção:"
-        );
-        carrinhos[sender].estado = "escolhendo_pagamento";
-        return;
-    }
-
-    if (carrinhos[sender].estado === "escolhendo_pagamento") {
-        const formas = {
-            "1": "1. Dinheiro 💵",
-            "2": "2. PIX 📱",
-            "3": "3. Cartão 💳"
-        };
-
-        if (formas[text]) {
-            carrinhos[sender].formaPagamento = formas[text];
-
-            if (text === "1") {
-                carrinhos[sender].estado = "aguardando_troco";
-                await client.sendMessage(sender, 
-                    "💵 *Pagamento em dinheiro selecionado*\n\n" +
-                    "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
-                );
-            } else {
-                await client.sendMessage(sender, 
-                    gerarCupomFiscal(
-                        carrinhos[sender].itens, 
-                        carrinhos[sender].endereco, 
-                        carrinhos[sender].formaPagamento
-                    )
-                );
-                await confirmarPedido(sender);
-                carrinhos[sender].estado = "pos_compra";
+    
+    // Processar mensagens
+    switch (carrinho.estado) {
+        case 'inicio':
+            await enviarBoasVindas(sender);
+            carrinho.estado = 'menu';
+            db.update(`clientes.${sender}`, c => c).write();
+            break;
+            
+        case 'menu':
+            if (message.hasButton) {
+                const buttonId = message.selectedButtonId;
+                if (buttonId === 'cardapio') await enviarPDFCardapio(sender);
+                else if (buttonId === 'novopedido') await enviarMenuInterativo(sender);
             }
-        } else {
-            await client.sendMessage(sender, "❌ Opção inválida. Digite 1, 2 ou 3.");
-        }
-        return;
-    }
-
-    if (carrinhos[sender].estado === "aguardando_troco") {
-        carrinhos[sender].troco = text;
-        await client.sendMessage(sender, 
-            gerarCupomFiscal(
-                carrinhos[sender].itens, 
-                carrinhos[sender].endereco, 
-                carrinhos[sender].formaPagamento,
-                text
-            )
-        );
-        await confirmarPedido(sender);
-        carrinhos[sender].estado = "pos_compra";
+            break;
+            
+        // ... (outros estados)
     }
 });
 
-async function confirmarPedido(sender) {
-    await client.sendMessage(sender,
-        "✅ PEDIDO CONFIRMADO! 🎊\n\n" +
-        "*Seu Smash já está sendo preparado com AMOR & CROCÂNCIA! ❤️🍟*\n\n" +
-        "⏱ *Tempo estimado:* 40-50 minutos\n" +
-        "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
-    );
-
-    setTimeout(async () => {
-        await client.sendMessage(sender, 
-            "🛵 *SEU PEDIDO ESTÁ A CAMINHO!*\n\n" +
-            "🔔 Deve chegar em instantes!\n" +
-            "Se já recebeu, ignore esta mensagem."
-        );
-    }, 30 * 60 * 1000);
-}
-
+// Inicialização
 client.initialize();
 
-// Rota da API para o chat web (frontend)
-app.post('/api/chat', (req, res) => {
-    try {
-        const userMessage = req.body.message;
-        const botResponse = responder(userMessage);
-        res.json({ response: botResponse });
-    } catch (error) {
-        console.error('Erro no chatbot:', error);
-        res.status(500).json({ error: 'Erro interno no servidor' });
-    }
-});
-
-// Função de resposta para o chat web
-function responder(mensagem) {
-    const lowerMsg = mensagem.toLowerCase();
-    
-    const respostas = {
-        'oi': 'Olá! Bem-vindo ao Smash Burger! Como posso ajudar?',
-        'ola': 'Olá! Pronto para fazer seu pedido?',
-        'cardapio': 'Confira nosso cardápio completo: /cardapio',
-        'pedido': 'Para fazer um pedido, acesse nosso WhatsApp',
-        'horario': 'Funcionamos das 18h às 23h todos os dias!',
-        'endereço': 'Estamos na Rua dos Hamburgers, 123 - Centro',
-        'default': 'Desculpe, não entendi. Para atendimento completo, chame no WhatsApp!'
-    };
-
-    return respostas[lowerMsg] || respostas['default'];
-}
-
-// Rota para servir o frontend
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Iniciar servidor
 app.listen(PORT, () => {
-    console.log(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
-    console.log(`🌐 Acesse: http://localhost:${PORT}`);
-    console.log('🔍 Aguardando escaneamento do QR Code...');
+    console.log(`💎 BOT PREMIUM RODANDO NA PORTA ${PORT}`);
+    console.log('🌐 Dashboard: http://localhost:3000/admin');
 });
