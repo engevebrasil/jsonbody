@@ -1,8 +1,7 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const path = require('path');
 const qrcode = require('qrcode-terminal');
-const { Client, MessageMedia } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 
 // Configuração do Express
@@ -10,17 +9,22 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middlewares
-app.use(bodyParser.json());
+app.use(express.json());
 app.use(express.static('public'));
 
-// Inicialização do cliente WhatsApp
+// Inicialização do cliente WhatsApp com persistência de sessão
 const client = new Client({
+    authStrategy: new LocalAuth({
+        dataPath: 'sessions'
+    }),
     puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        headless: true
     }
 });
 
-let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null} }
+// Estrutura de dados para pedidos
+const pedidos = new Map();
 
 const cardapio = {
     lanches: [
@@ -39,42 +43,52 @@ const cardapio = {
     ]
 };
 
-// Caminho relativo para o PDF (dentro da pasta public)
+// Caminho para o PDF do cardápio
 const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
+const PDF_URL = `http://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost:' + PORT}/cardapio.pdf`;
 
 // Funções auxiliares
-function formatarTroco(troco) {
-    if (troco.toLowerCase() === 'não' || troco.toLowerCase() === 'nao') {
-        return 'não';
-    }
-    const numeros = troco.replace(/[^\d,.]/g, '').replace('.', ',');
-    const partes = numeros.split(',');
-    let inteiro = partes[0] || '0';
-    let centavos = partes[1] ? partes[1].padEnd(2, '0').slice(0, 2) : '00';
-    return `R$ ${inteiro},${centavos}`;
+function formatarMoeda(valor) {
+    return valor.toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: 'BRL',
+        minimumFractionDigits: 2
+    });
 }
 
-function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) {
-    const total = itens.reduce((sum, item) => sum + item.preco, 0);
-    const taxaEntrega = total * 0.1;
-    const subtotal = total - taxaEntrega;
+function formatarTroco(troco) {
+    if (/não|nao/i.test(troco)) return 'não';
+    
+    const valor = parseFloat(troco.replace(',', '.'));
+    return isNaN(valor) ? 'valor inválido' : formatarMoeda(valor);
+}
+
+function calcularTotal(itens) {
+    const subtotal = itens.reduce((sum, item) => sum + item.preco, 0);
+    const taxaEntrega = subtotal * 0.1;
+    const total = subtotal + taxaEntrega;
+    return { subtotal, taxaEntrega, total };
+}
+
+function gerarCupomFiscal(itens, endereco, formaPagamento, troco = null) {
+    const { subtotal, taxaEntrega, total } = calcularTotal(itens);
     const now = new Date();
     
-    let cupom = `SMASH BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n\n`;
-
-    cupom += "ITENS:\n";
+    let cupom = `🍔 *SMASH BURGER* - ${now.toLocaleDateString('pt-BR')} ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n\n`;
+    cupom += "📋 *ITENS:*\n";
+    
     itens.forEach(item => {
-        cupom += `${item.id}. ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+        cupom += `▫️ ${item.nome} - ${formatarMoeda(item.preco)}\n`;
     });
 
-    cupom += `\nSubtotal: R$ ${subtotal.toFixed(2).replace('.', ',')}`;
-    cupom += `\nTaxa de Entrega (10%): R$ ${taxaEntrega.toFixed(2).replace('.', ',')}`;
-    cupom += `\nTOTAL: R$ ${total.toFixed(2).replace('.', ',')}\n`;
-    cupom += `\nENDEREÇO:\n${endereco}\n`;
-    cupom += `\nFORMA DE PAGAMENTO:\n${formaPagamento}\n`;
+    cupom += `\n💲 Subtotal: ${formatarMoeda(subtotal)}`;
+    cupom += `\n🚚 Taxa de Entrega (10%): ${formatarMoeda(taxaEntrega)}`;
+    cupom += `\n💵 *TOTAL: ${formatarMoeda(total)}*\n`;
+    cupom += `\n🏠 *ENDEREÇO:*\n${endereco}\n`;
+    cupom += `\n💳 *PAGAMENTO:* ${formaPagamento}\n`;
 
-    if (formaPagamento === "1. Dinheiro 💵" && troco) {
-        cupom += `\nTroco para: ${formatarTroco(troco)}`;
+    if (formaPagamento.includes("Dinheiro") && troco) {
+        cupom += `\n🪙 Troco para: ${formatarTroco(troco)}`;
     }
 
     return cupom;
@@ -82,256 +96,337 @@ function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) 
 
 function mostrarCardapio() {
     let msg = "🌟 *CARDÁPIO SMASH BURGER* 🌟\n\n";
-    msg += "══════════════════════════\n";
+    
+    // Lanches
     msg += "🍔 *LANCHES*\n";
-    msg += "══════════════════════════\n";
     cardapio.lanches.forEach(item => {
-        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+        msg += `🔹 ${item.id}. ${item.nome} - ${formatarMoeda(item.preco)}\n`;
     });
 
-    msg += "\n══════════════════════════\n";
-    msg += "🥤 *BEBIDAS*\n";
-    msg += "══════════════════════════\n";
+    // Bebidas
+    msg += "\n🥤 *BEBIDAS*\n";
     cardapio.bebidas.forEach(item => {
-        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+        msg += `🔹 ${item.id}. ${item.nome} - ${formatarMoeda(item.preco)}\n`;
     });
 
-    msg += "\n══════════════════════════\n";
-    msg += "🔢 Digite o *NÚMERO* do item desejado:";
+    msg += "\n🔢 Digite o *NÚMERO* do item:";
     return msg;
 }
 
 function mostrarOpcoes() {
-    return "✨ *O QUE DESEJA FAZER?* ✨\n\n" +
-           "══════════════════════════\n" +
-           "1️⃣  Adicionar mais itens\n" +
-           "2️⃣  Finalizar compra\n" +
-           "3️⃣  Cancelar pedido\n" +
-           "4️⃣  Falar com atendente\n" +
-           "5️⃣  📄 Ver Cardápio (PDF)\n" +
-           "══════════════════════════\n" +
-           "🔢 Digite o número da opção:";
+    return "✨ *OPÇÕES* ✨\n\n" +
+        "1. ➕ Adicionar itens\n" +
+        "2. ✅ Finalizar pedido\n" +
+        "3. ❌ Cancelar\n" +
+        "4. 👨‍🍳 Falar com atendente\n" +
+        "5. 📄 Cardápio PDF\n\n" +
+        "🔢 Digite o número:";
 }
 
-// Eventos do WhatsApp - ATUALIZADO PARA QR CODE MELHOR
+// Eventos do WhatsApp
 client.on('qr', qr => {
-    // QR code no terminal (compacto)
+    // QR code no terminal
     qrcode.generate(qr, { small: true });
     
-    // Link alternativo para escaneamento
-    const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&data=${encodeURIComponent(qr)}`;
-    console.log('\n📢 QR Code alternativo (caso não consiga ler acima):');
+    // Link alternativo
+    const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+    console.log('\n🔗 LINK PARA ESCANEAMENTO:');
     console.log(qrLink);
-    console.log('⏳ Válido por 60 segundos\n');
+    console.log('⏳ Válido por 60 segundos');
+});
+
+client.on('authenticated', () => {
+    console.log('🔑 Autenticação realizada!');
 });
 
 client.on('ready', () => {
-    console.log('🤖 Bot pronto e operacional!');
-    console.log(`🕒 Última inicialização: ${new Date().toLocaleTimeString()}`);
+    console.log('🤖 Bot pronto!');
+    console.log(`⏰ Iniciado em: ${new Date().toLocaleString()}`);
 });
 
+client.on('disconnected', (reason) => {
+    console.log(`❌ Conexão perdida: ${reason}`);
+    console.log('Reiniciando em 5 segundos...');
+    setTimeout(() => client.initialize(), 5000);
+});
+
+// Gerenciamento de mensagens
 client.on('message', async message => {
-    const text = message.body.trim();
-    const sender = message.from;
-    const agora = Date.now();
+    try {
+        const texto = message.body.trim();
+        const remetente = message.from;
+        const agora = Date.now();
 
-    if (!carrinhos[sender]) {
-        carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: 0, atendenteTimer: null };
-    }
-
-    if (carrinhos[sender].atendenteTimer && (agora - carrinhos[sender].atendenteTimer < 600000)) {
-        return;
-    } else if (carrinhos[sender].atendenteTimer) {
-        carrinhos[sender].atendenteTimer = null;
-        carrinhos[sender].estado = "opcoes";
-        await client.sendMessage(sender, "⏳ *O período de atendimento humano terminou*\nComo posso ajudar?");
-        await client.sendMessage(sender, mostrarOpcoes());
-        return;
-    }
-
-    if (text.toLowerCase() === 'cliente') {
-        carrinhos[sender] = { itens: [], estado: "escolhendo", ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, atendenteTimer: null };
-        await client.sendMessage(sender, "🔄 *Reiniciando seu pedido...*");
-        await client.sendMessage(sender, mostrarCardapio());
-        return;
-    }
-
-    if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
-        carrinhos[sender].estado = "opcoes";
-        await client.sendMessage(sender, "👋 *Bem-vindo ao Smash Burger!*");
-        await client.sendMessage(sender, mostrarOpcoes());
-        return;
-    }
-
-    if (text === '5' || text.toLowerCase().includes('cardapio')) {
-        if (fs.existsSync(PDF_PATH)) {
-            const media = MessageMedia.fromFilePath(PDF_PATH);
-            await client.sendMessage(sender, media, { caption: '📄 *Cardápio Completo Smash Burger!*' });
-            carrinhos[sender].ultimoEnvioPdf = agora;
-        } else {
-            await client.sendMessage(sender, "⚠️ *Cardápio temporariamente indisponível.*");
+        // Inicializar pedido se necessário
+        if (!pedidos.has(remetente)) {
+            pedidos.set(remetente, {
+                itens: [],
+                estado: "inicio",
+                ultimoEnvioPdf: 0,
+                atendenteTimer: null
+            });
+            
+            // SAUDAÇÃO PERSONALIZADA PARA NOVOS CLIENTES
+            await client.sendMessage(
+                remetente,
+                "🍔 Olá, Smash Lover!\n" +
+                "Seja bem-vindo(a) ao paraíso dos hambúrgueres! 🌟\n" +
+                "Aqui, cada mordida é uma explosão de sabor.\n" +
+                "👉 Vamos matar sua fome? Peça já! 🔥"
+            );
+            
+            // BOTÃO PARA ACESSAR O CARDÁPIO EM PDF
+            await client.sendMessage(remetente, {
+                text: "📄 Clique no botão abaixo para ver nosso cardápio completo",
+                buttons: [
+                    { body: "📄 Ver Cardápio" }
+                ],
+                title: "Cardápio Smash Burger",
+                footer: "Tudo feito com ingredientes frescos e selecionados"
+            });
         }
         
-        if (carrinhos[sender].estado === "escolhendo") {
-            await client.sendMessage(sender, mostrarCardapio());
-        } else {
-            await client.sendMessage(sender, mostrarOpcoes());
-        }
-        return;
-    }
+        const pedido = pedidos.get(remetente);
 
-    if (carrinhos[sender].estado === "escolhendo") {
-        const numeroItem = parseInt(text);
-        const todosItens = [...cardapio.lanches, ...cardapio.bebidas];
-        const itemSelecionado = todosItens.find(item => item.id === numeroItem);
-
-        if (itemSelecionado) {
-            carrinhos[sender].itens.push(itemSelecionado);
-            carrinhos[sender].estado = "opcoes";
-            await client.sendMessage(sender, 
-                `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n` +
-                `💰 Valor: R$ ${itemSelecionado.preco.toFixed(2).replace('.', ',')}\n\n` + 
-                mostrarOpcoes()
-            );
-        } else {
-            await client.sendMessage(sender, 
-                "❌ *Item não encontrado!*\n\n" +
-                "🔢 Por favor, digite apenas o número do item conforme o cardápio:"
-            );
-            await client.sendMessage(sender, mostrarCardapio());
-        }
-        return;
-    }
-
-    if (carrinhos[sender].estado === "opcoes") {
-        switch (text) {
-            case "1":
-                carrinhos[sender].estado = "escolhendo";
-                await client.sendMessage(sender, "📝 *Adicionando mais itens...*");
-                await client.sendMessage(sender, mostrarCardapio());
-                break;
-
-            case "2":
-                if (carrinhos[sender].itens.length === 0) {
-                    await client.sendMessage(sender, "🛒 *Seu carrinho está vazio!*\nAdicione itens antes de finalizar.");
-                    return;
-                }
-                carrinhos[sender].estado = "aguardando_endereco";
-                await client.sendMessage(sender,
-                    "🏠 *INFORME SEU ENDEREÇO*\n\n" +
-                    "Por favor, envie:\n" +
-                    "📍 Rua, Número\n" +
-                    "🏘️ Bairro\n" +
-                    "📌 Ponto de referência\n\n" +
-                    "Exemplo:\n" +
-                    "👉 Rua das Flores, 123\n" +
-                    "👉 Centro\n" +
-                    "👉 Próximo ao mercado"
-                );
-                break;
-
-            case "3":
-                carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, atendenteTimer: null };
-                await client.sendMessage(sender, "🗑️ *Pedido cancelado com sucesso!*\nVolte sempre!");
-                break;
-                
-            case "4":
-                carrinhos[sender].atendenteTimer = Date.now();
-                await client.sendMessage(sender,
-                    "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\n\n" +
-                    "Você será atendido por um de nossos especialistas em hambúrgueres!\n\n" +
-                    "⏳ Tempo de atendimento: 10 minutos\n" +
-                    "⏰ Após esse período, retornaremos ao modo automático"
-                );
-                break;
-
-            default:
-                await client.sendMessage(sender, 
-                    "⚠️ *OPÇÃO INVÁLIDA!*\n\n" +
-                    "Por favor, escolha uma das opções abaixo:"
-                );
-                await client.sendMessage(sender, mostrarOpcoes());
-                break;
-        }
-        return;
-    }
-
-    if (carrinhos[sender].estado === "aguardando_endereco") {
-        if (text.length < 10) {
-            await client.sendMessage(sender, "📢 *Endereço incompleto!*\nPor favor, informe rua, número e bairro.");
+        // Verificar atendente humano
+        if (pedido.atendenteTimer && (agora - pedido.atendenteTimer < 600000)) return;
+        
+        if (pedido.atendenteTimer) {
+            pedido.atendenteTimer = null;
+            pedido.estado = "opcoes";
+            await client.sendMessage(remetente, "⏳ *Atendimento humano encerrado*\nComo posso ajudar?");
+            await client.sendMessage(remetente, mostrarOpcoes());
             return;
         }
-        carrinhos[sender].endereco = text;
-        
-        await client.sendMessage(sender,
-            "💳 *FORMA DE PAGAMENTO* 💳\n\n" +
-            "1. Dinheiro 💵\n" +
-            "2. PIX 📱\n" +
-            "3. Cartão 💳\n\n" +
-            "🔢 Digite o número da opção:"
-        );
-        carrinhos[sender].estado = "escolhendo_pagamento";
-        return;
-    }
 
-    if (carrinhos[sender].estado === "escolhendo_pagamento") {
-        const formas = {
-            "1": "1. Dinheiro 💵",
-            "2": "2. PIX 📱",
-            "3": "3. Cartão 💳"
-        };
-
-        if (formas[text]) {
-            carrinhos[sender].formaPagamento = formas[text];
-
-            if (text === "1") {
-                carrinhos[sender].estado = "aguardando_troco";
-                await client.sendMessage(sender, 
-                    "💵 *Pagamento em dinheiro selecionado*\n\n" +
-                    "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
-                );
-            } else {
-                await client.sendMessage(sender, 
-                    gerarCupomFiscal(
-                        carrinhos[sender].itens, 
-                        carrinhos[sender].endereco, 
-                        carrinhos[sender].formaPagamento
-                    )
-                );
-                await confirmarPedido(sender);
-                carrinhos[sender].estado = "pos_compra";
-            }
-        } else {
-            await client.sendMessage(sender, "❌ Opção inválida. Digite 1, 2 ou 3.");
+        // Comandos especiais
+        if (/cliente|reiniciar/i.test(texto)) {
+            pedidos.set(remetente, {
+                itens: [],
+                estado: "escolhendo",
+                ultimoEnvioPdf: pedido.ultimoEnvioPdf,
+                atendenteTimer: null
+            });
+            await client.sendMessage(remetente, "🔄 *Pedido reiniciado!*");
+            return client.sendMessage(remetente, mostrarCardapio());
         }
-        return;
-    }
 
-    if (carrinhos[sender].estado === "aguardando_troco") {
-        carrinhos[sender].troco = text;
-        await client.sendMessage(sender, 
-            gerarCupomFiscal(
-                carrinhos[sender].itens, 
-                carrinhos[sender].endereco, 
-                carrinhos[sender].formaPagamento,
-                text
-            )
-        );
-        await confirmarPedido(sender);
-        carrinhos[sender].estado = "pos_compra";
+        // TRATAMENTO DO BOTÃO DE CARDÁPIO
+        if (texto === '📄 Ver Cardápio') {
+            if (fs.existsSync(PDF_PATH)) {
+                const media = MessageMedia.fromFilePath(PDF_PATH);
+                await client.sendMessage(remetente, media, { 
+                    caption: '📄 *CARDÁPIO COMPLETO SMASH BURGER!*\n' +
+                             '👉 Acesse também: ' + PDF_URL 
+                });
+                pedido.ultimoEnvioPdf = agora;
+            } else {
+                await client.sendMessage(remetente, "⚠️ *Cardápio temporariamente indisponível*");
+            }
+            return client.sendMessage(remetente, "🔢 Digite o *NÚMERO* do item que deseja pedir:");
+        }
+
+        // Fluxo principal
+        switch (pedido.estado) {
+            case "inicio":
+            case "pos_compra":
+                pedido.estado = "opcoes";
+                await client.sendMessage(remetente, mostrarOpcoes());
+                break;
+                
+            case "opcoes":
+                await processarOpcao(remetente, pedido, texto);
+                break;
+                
+            case "escolhendo":
+                await adicionarItem(remetente, pedido, texto);
+                break;
+                
+            case "aguardando_endereco":
+                await processarEndereco(remetente, pedido, texto);
+                break;
+                
+            case "escolhendo_pagamento":
+                await processarPagamento(remetente, pedido, texto);
+                break;
+                
+            case "aguardando_troco":
+                await processarTroco(remetente, pedido, texto);
+                break;
+        }
+    } catch (error) {
+        console.error('Erro no processamento:', error);
     }
 });
 
-async function confirmarPedido(sender) {
-    await client.sendMessage(sender,
-        "🎉 *PEDIDO CONFIRMADO!* 🎉\n\n" +
-        "👨‍🍳 *Seu hambúrguer está sendo preparado com amor!*\n\n" +
-        "⏱ *Tempo estimado:* 40-50 minutos\n" +
-        "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
-    );
+// Funções de processamento
+async function processarOpcao(remetente, pedido, texto) {
+    if (/cardapio|5/.test(texto)) {
+        if (fs.existsSync(PDF_PATH)) {
+            const media = MessageMedia.fromFilePath(PDF_PATH);
+            await client.sendMessage(remetente, media, { 
+                caption: '📄 *CARDÁPIO COMPLETO SMASH BURGER!*\n' +
+                         '👉 Acesse também: ' + PDF_URL 
+            });
+            pedido.ultimoEnvioPdf = Date.now();
+        } else {
+            await client.sendMessage(remetente, "⚠️ *Cardápio indisponível*");
+        }
+        return client.sendMessage(remetente, "🔢 Digite o *NÚMERO* do item que deseja pedir:");
+    }
 
+    switch (texto) {
+        case "1":
+            pedido.estado = "escolhendo";
+            await client.sendMessage(remetente, "📝 *Adicione itens:*");
+            await client.sendMessage(remetente, mostrarCardapio());
+            break;
+            
+        case "2":
+            if (pedido.itens.length === 0) {
+                return client.sendMessage(remetente, "🛒 *Carrinho vazio!* Adicione itens primeiro.");
+            }
+            pedido.estado = "aguardando_endereco";
+            await client.sendMessage(
+                remetente,
+                "🏠 *ENDEREÇO DE ENTREGA*\n\n" +
+                "Por favor, envie:\n" +
+                "📍 Rua, Número\n" +
+                "🏘️ Bairro\n" +
+                "📌 Ponto de referência\n\n" +
+                "Exemplo:\n" +
+                "👉 Rua das Flores, 123\n" +
+                "👉 Centro\n" +
+                "👉 Próximo ao mercado"
+            );
+            break;
+            
+        case "3":
+            pedidos.set(remetente, {
+                itens: [],
+                estado: "inicio",
+                ultimoEnvioPdf: pedido.ultimoEnvioPdf,
+                atendenteTimer: null
+            });
+            await client.sendMessage(remetente, "🗑️ *Pedido cancelado!*");
+            // Reenviar saudação inicial
+            await client.sendMessage(
+                remetente,
+                "🍔 Olá, Smash Lover!\n" +
+                "Seja bem-vindo(a) ao paraíso dos hambúrgueres! 🌟"
+            );
+            break;
+            
+        case "4":
+            pedido.atendenteTimer = Date.now();
+            await client.sendMessage(
+                remetente,
+                "👨‍🍳 *ATENDENTE ACIONADO!*\n\n" +
+                "Você será atendido por um de nossos especialistas em hambúrgueres!\n\n" +
+                "⏳ Tempo de atendimento: 10 minutos\n" +
+                "⏰ Após esse período, retornaremos ao modo automático"
+            );
+            break;
+            
+        default:
+            await client.sendMessage(remetente, "⚠️ *Opção inválida!*");
+            await client.sendMessage(remetente, mostrarOpcoes());
+    }
+}
+
+async function adicionarItem(remetente, pedido, texto) {
+    const id = parseInt(texto);
+    const item = [...cardapio.lanches, ...cardapio.bebidas].find(i => i.id === id);
+    
+    if (item) {
+        pedido.itens.push(item);
+        pedido.estado = "opcoes";
+        await client.sendMessage(
+            remetente,
+            `✅ *${item.nome}* adicionado!\n` +
+            `💲 Valor: ${formatarMoeda(item.preco)}`
+        );
+        await client.sendMessage(remetente, mostrarOpcoes());
+    } else {
+        await client.sendMessage(remetente, "❌ *Item inválido!* Digite apenas números do cardápio.");
+        await client.sendMessage(remetente, mostrarCardapio());
+    }
+}
+
+async function processarEndereco(remetente, pedido, texto) {
+    if (texto.length < 15) {
+        return client.sendMessage(remetente, "📢 *Endereço incompleto!* Informe rua, número e bairro.");
+    }
+    
+    pedido.endereco = texto;
+    pedido.estado = "escolhendo_pagamento";
+    
+    await client.sendMessage(
+        remetente,
+        "💳 *FORMA DE PAGAMENTO* 💳\n\n" +
+        "1. 💵 Dinheiro\n" +
+        "2. 📱 PIX\n" +
+        "3. 💳 Cartão\n\n" +
+        "🔢 Digite o número da opção:"
+    );
+}
+
+async function processarPagamento(remetente, pedido, texto) {
+    const formas = {
+        "1": "💵 Dinheiro",
+        "2": "📱 PIX",
+        "3": "💳 Cartão"
+    };
+    
+    const forma = formas[texto];
+    
+    if (forma) {
+        pedido.formaPagamento = forma;
+        
+        if (texto === "1") {
+            pedido.estado = "aguardando_troco";
+            await client.sendMessage(remetente, 
+                "💵 *Pagamento em dinheiro selecionado*\n\n" +
+                "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
+            );
+        } else {
+            await finalizarPedido(remetente, pedido);
+        }
+    } else {
+        await client.sendMessage(remetente, "❌ Opção inválida. Digite 1, 2 ou 3.");
+    }
+}
+
+async function processarTroco(remetente, pedido, texto) {
+    pedido.troco = texto;
+    await finalizarPedido(remetente, pedido);
+}
+
+async function finalizarPedido(remetente, pedido) {
+    const cupom = gerarCupomFiscal(
+        pedido.itens,
+        pedido.endereco,
+        pedido.formaPagamento,
+        pedido.troco
+    );
+    
+    await client.sendMessage(remetente, cupom);
+    
+    // MENSAGEM DE CONFIRMAÇÃO ATUALIZADA
+    await client.sendMessage(
+        remetente,
+        "✅ *PEDIDO CONFIRMADO!* 🎊\n" +
+        "Seu Smash já está sendo preparado com *AMOR & CROCÂNCIA!* ❤️🍟\n\n" +
+        "⏳ *Tempo estimado:* 30 a 50 min\n" +
+        "📱 Acompanharemos seu pedido e avisaremos quando sair para entrega!"
+    );
+    
+    pedido.estado = "pos_compra";
+    
+    // Notificação de entrega
     setTimeout(async () => {
-        await client.sendMessage(sender, 
+        await client.sendMessage(
+            remetente,
             "🛵 *SEU PEDIDO ESTÁ A CAMINHO!*\n\n" +
             "🔔 Deve chegar em instantes!\n" +
             "Se já recebeu, ignore esta mensagem."
@@ -339,45 +434,35 @@ async function confirmarPedido(sender) {
     }, 30 * 60 * 1000);
 }
 
+// Inicialização
 client.initialize();
 
-// Rota da API para o chat web (frontend)
+// API para chat web
 app.post('/api/chat', (req, res) => {
     try {
-        const userMessage = req.body.message;
-        const botResponse = responder(userMessage);
-        res.json({ response: botResponse });
+        const respostas = {
+            'oi': 'Olá! Bem-vindo ao Smash Burger!',
+            'cardapio': `Confira nosso cardápio: ${PDF_URL}`,
+            'horario': 'Funcionamos das 18h às 23h todos os dias!',
+            'endereco': 'Estamos na Rua dos Hamburgers, 123 - Centro',
+            'default': 'Para fazer pedidos, chame no WhatsApp!'
+        };
+        
+        const resposta = respostas[req.body.message.toLowerCase()] || respostas['default'];
+        res.json({ response: resposta });
     } catch (error) {
-        console.error('Erro no chatbot:', error);
-        res.status(500).json({ error: 'Erro interno no servidor' });
+        res.status(500).json({ error: 'Erro no servidor' });
     }
 });
 
-// Função de resposta para o chat web
-function responder(mensagem) {
-    const lowerMsg = mensagem.toLowerCase();
-    
-    const respostas = {
-        'oi': 'Olá! Bem-vindo ao Smash Burger! Como posso ajudar?',
-        'ola': 'Olá! Pronto para fazer seu pedido?',
-        'cardapio': 'Confira nosso cardápio completo: /cardapio',
-        'pedido': 'Para fazer um pedido, acesse nosso WhatsApp',
-        'horario': 'Funcionamos das 18h às 23h todos os dias!',
-        'endereço': 'Estamos na Rua dos Hamburgers, 123 - Centro',
-        'default': 'Desculpe, não entendi. Para atendimento completo, chame no WhatsApp!'
-    };
-
-    return respostas[lowerMsg] || respostas['default'];
-}
-
-// Rota para servir o frontend
+// Frontend
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Iniciar servidor
 app.listen(PORT, () => {
-    console.log(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
-    console.log(`🌐 Acesse: http://localhost:${PORT}`);
+    console.log(`🚀 Servidor rodando: http://localhost:${PORT}`);
     console.log('🔍 Aguardando escaneamento do QR Code...');
+    console.log(`📄 Cardápio disponível em: ${PDF_URL}`);
 });
