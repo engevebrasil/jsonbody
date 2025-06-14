@@ -1,299 +1,383 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BurgerBot Premium</title>
-  <style>
-    :root {
-      --primary: #ff5722;
-      --secondary: #ff9800;
-      --dark: #333;
-      --light: #f5f5f5;
-      --success: #4caf50;
-      --danger: #f44336;
-    }
-    
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }
-    
-    body {
-      background: linear-gradient(135deg, #ff7b25, #ff5e62);
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 20px;
-    }
-    
-    .container {
-      width: 100%;
-      max-width: 900px;
-      background: white;
-      border-radius: 20px;
-      box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      height: 95vh;
-    }
-    
-    header {
-      background: var(--primary);
-      color: white;
-      padding: 20px;
-      text-align: center;
-      position: relative;
-    }
-    
-    .logo {
-      font-size: 2.5rem;
-      margin-bottom: 10px;
-    }
-    
-    .tag {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      background: #ffeb3b;
-      color: #333;
-      padding: 5px 10px;
-      border-radius: 20px;
-      font-size: 0.8rem;
-      font-weight: bold;
-    }
-    
-    .chat-container {
-      flex: 1;
-      padding: 20px;
-      overflow-y: auto;
-      background: #f9f9f9;
-      display: flex;
-      flex-direction: column;
-      gap: 15px;
-    }
-    
-    .message {
-      max-width: 85%;
-      padding: 12px 16px;
-      border-radius: 18px;
-      position: relative;
-      animation: fadeIn 0.3s ease;
-      line-height: 1.5;
-    }
-    
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    
-    .bot-message {
-      background: #e0e0e0;
-      align-self: flex-start;
-      border-bottom-left-radius: 5px;
-    }
-    
-    .user-message {
-      background: var(--success);
-      color: white;
-      align-self: flex-end;
-      border-bottom-right-radius: 5px;
-    }
-    
-    .options {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-top: 10px;
-    }
-    
-    .option-btn {
-      background: var(--secondary);
-      color: white;
-      border: none;
-      border-radius: 20px;
-      padding: 8px 15px;
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-    
-    .option-btn:hover {
-      background: #e68a00;
-      transform: translateY(-2px);
-    }
-    
-    .input-container {
-      padding: 15px;
-      background: white;
-      display: flex;
-      border-top: 1px solid #eee;
-    }
-    
-    #user-input {
-      flex: 1;
-      padding: 12px 15px;
-      border: 1px solid #ddd;
-      border-radius: 25px;
-      outline: none;
-      font-size: 1rem;
-    }
-    
-    #send-btn {
-      background: var(--primary);
-      color: white;
-      border: none;
-      width: 50px;
-      height: 50px;
-      border-radius: 50%;
-      margin-left: 10px;
-      cursor: pointer;
-      font-size: 1.2rem;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: all 0.3s;
-    }
-    
-    #send-btn:hover {
-      background: #e64a19;
-      transform: scale(1.05);
-    }
-    
-    .status {
-      display: flex;
-      align-items: center;
-      margin-top: 10px;
-      padding: 10px;
-      background: #e3f2fd;
-      border-radius: 10px;
-      color: #1976d2;
-    }
-    
-    .status i {
-      margin-right: 10px;
-      font-size: 1.2rem;
-    }
-    
-    .cart-item {
-      display: flex;
-      justify-content: space-between;
-      padding: 8px 0;
-      border-bottom: 1px solid #eee;
-    }
-    
-    .cart-total {
-      font-weight: bold;
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 2px solid var(--success);
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <div class="tag">PREMIUM</div>
-      <div class="logo">🍔 BURGERBOT</div>
-      <h1>Atendimento Premium</h1>
-      <p>Faça seu pedido de forma rápida e fácil!</p>
-    </header>
-    
-    <div class="chat-container" id="chat-container">
-      <div class="message bot-message">
-        Olá! 👋 Bem-vindo à Hamburgueria Premium!
-        <p>Estou carregando nosso cardápio especial...</p>
-      </div>
-    </div>
-    
-    <div class="input-container">
-      <input type="text" id="user-input" placeholder="Digite sua mensagem..." autocomplete="off">
-      <button id="send-btn">➤</button>
-    </div>
-  </div>
+const express = require('express');
+const bodyParser = require('body-parser');
+const path = require('path');
+const qrcode = require('qrcode-terminal');
+const { Client, MessageMedia } = require('whatsapp-web.js');
+const fs = require('fs');
 
-  <script>
-    const chatContainer = document.getElementById('chat-container');
-    const userInput = document.getElementById('user-input');
-    const sendBtn = document.getElementById('send-btn');
-    
-    // Gerar ID de sessão único
-    const sessionId = 'sess_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-    
-    // Função para adicionar mensagens ao chat
-    function addMessage(message, isUser = false, options = []) {
-      const messageDiv = document.createElement('div');
-      messageDiv.classList.add('message');
-      messageDiv.classList.add(isUser ? 'user-message' : 'bot-message');
-      messageDiv.innerHTML = message;
-      
-      if (options.length > 0) {
-        const optionsDiv = document.createElement('div');
-        optionsDiv.classList.add('options');
-        
-        options.forEach(option => {
-          const button = document.createElement('button');
-          button.classList.add('option-btn');
-          button.textContent = option.label;
-          button.dataset.value = option.value;
-          button.onclick = () => sendOption(option.value);
-          optionsDiv.appendChild(button);
-        });
-        
-        messageDiv.appendChild(optionsDiv);
-      }
-      
-      chatContainer.appendChild(messageDiv);
-      chatContainer.scrollTop = chatContainer.scrollHeight;
+// Configuração do Express
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middlewares
+app.use(bodyParser.json());
+app.use(express.static('public'));
+
+// Inicialização do cliente WhatsApp
+const client = new Client({
+    puppeteer: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
-    
-    // Função para enviar opção
-    function sendOption(value) {
-      addMessage(value, true);
-      processMessage(value);
+});
+
+let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null} }
+
+const cardapio = {
+    lanches: [
+        { id: 1, nome: "🍔 Smash Burger Clássico", preco: 20.00 },
+        { id: 2, nome: "🥗 Smash! Salada", preco: 23.00 },
+        { id: 3, nome: "🥓 Salada Bacon", preco: 27.00 },
+        { id: 4, nome: "🍔🍔🍔 Smash!! Triple", preco: 28.00 },
+        { id: 5, nome: "🍔🥓 Smash Burger Bacon", preco: 29.99 },
+        { id: 6, nome: "🍔🍖️ Burger Calabacon", preco: 32.99 }
+    ],
+    bebidas: [
+        { id: 7, nome: "🥤 Coca-Cola 2L", preco: 12.00 },
+        { id: 8, nome: "🥤 Poty Guaraná 2L", preco: 10.00 },
+        { id: 9, nome: "🥤 Coca-Cola Lata", preco: 6.00 },
+        { id: 10, nome: "🥤 Guaraná Lata", preco: 6.00 }
+    ]
+};
+
+// Caminho relativo para o PDF (dentro da pasta public)
+const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
+
+// Funções auxiliares
+function formatarTroco(troco) {
+    if (troco.toLowerCase() === 'não' || troco.toLowerCase() === 'nao') {
+        return 'não';
     }
+    const numeros = troco.replace(/[^\d,.]/g, '').replace('.', ',');
+    const partes = numeros.split(',');
+    let inteiro = partes[0] || '0';
+    let centavos = partes[1] ? partes[1].padEnd(2, '0').slice(0, 2) : '00';
+    return `R$ ${inteiro},${centavos}`;
+}
+
+function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) {
+    const total = itens.reduce((sum, item) => sum + item.preco, 0);
+    const taxaEntrega = total * 0.1;
+    const subtotal = total - taxaEntrega;
+    const now = new Date();
     
-    // Função para enviar mensagem
-    function sendMessage() {
-      const message = userInput.value.trim();
-      if (message) {
-        addMessage(message, true);
-        userInput.value = '';
-        processMessage(message);
-      }
-    }
-    
-    // Processar mensagens via API
-    async function processMessage(message) {
-      try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId, message })
-        });
-        
-        const data = await response.json();
-        addMessage(data.response, false, data.options);
-      } catch (error) {
-        console.error('Erro:', error);
-        addMessage('⚠️ Ocorreu um erro. Tente novamente.', false);
-      }
-    }
-    
-    // Event Listeners
-    sendBtn.addEventListener('click', sendMessage);
-    userInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') sendMessage();
+    let cupom = `SMASH BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n\n`;
+
+    cupom += "ITENS:\n";
+    itens.forEach(item => {
+        cupom += `${item.id}. ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
     });
+
+    cupom += `\nSubtotal: R$ ${subtotal.toFixed(2).replace('.', ',')}`;
+    cupom += `\nTaxa de Entrega (10%): R$ ${taxaEntrega.toFixed(2).replace('.', ',')}`;
+    cupom += `\nTOTAL: R$ ${total.toFixed(2).replace('.', ',')}\n`;
+    cupom += `\nENDEREÇO:\n${endereco}\n`;
+    cupom += `\nFORMA DE PAGAMENTO:\n${formaPagamento}\n`;
+
+    if (formaPagamento === "1. Dinheiro 💵" && troco) {
+        cupom += `\nTroco para: ${formatarTroco(troco)}`;
+    }
+
+    return cupom;
+}
+
+function mostrarCardapio() {
+    let msg = "🌟 *CARDÁPIO DOKA BURGER* 🌟\n\n";
+    msg += "══════════════════════════\n";
+    msg += "🍔 *LANCHES*\n";
+    msg += "══════════════════════════\n";
+    cardapio.lanches.forEach(item => {
+        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+    });
+
+    msg += "\n══════════════════════════\n";
+    msg += "🥤 *BEBIDAS*\n";
+    msg += "══════════════════════════\n";
+    cardapio.bebidas.forEach(item => {
+        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+    });
+
+    msg += "\n══════════════════════════\n";
+    msg += "🔢 Digite o *NÚMERO* do item desejado:";
+    return msg;
+}
+
+function mostrarOpcoes() {
+    return "✨ *O QUE DESEJA FAZER?* ✨\n\n" +
+           "══════════════════════════\n" +
+           "1️⃣  Adicionar mais itens\n" +
+           "2️⃣  Finalizar compra\n" +
+           "3️⃣  Cancelar pedido\n" +
+           "4️⃣  Falar com atendente\n" +
+           "5️⃣  📄 Ver Cardápio (PDF)\n" +
+           "══════════════════════════\n" +
+           "🔢 Digite o número da opção:";
+}
+
+// Eventos do WhatsApp - ATUALIZADO PARA QR CODE MELHOR
+client.on('qr', qr => {
+    // QR code no terminal (compacto)
+    qrcode.generate(qr, { small: true });
     
-    // Iniciar conversa
-    window.onload = () => {
-      processMessage('inicio');
+    // Link alternativo para escaneamento
+    const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&data=${encodeURIComponent(qr)}`;
+    console.log('\n📢 QR Code alternativo (caso não consiga ler acima):');
+    console.log(qrLink);
+    console.log('⏳ Válido por 60 segundos\n');
+});
+
+client.on('ready', () => {
+    console.log('🤖 Bot pronto e operacional!');
+    console.log(`🕒 Última inicialização: ${new Date().toLocaleTimeString()}`);
+});
+
+client.on('message', async message => {
+    const text = message.body.trim();
+    const sender = message.from;
+    const agora = Date.now();
+
+    if (!carrinhos[sender]) {
+        carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: 0, atendenteTimer: null };
+    }
+
+    if (carrinhos[sender].atendenteTimer && (agora - carrinhos[sender].atendenteTimer < 600000)) {
+        return;
+    } else if (carrinhos[sender].atendenteTimer) {
+        carrinhos[sender].atendenteTimer = null;
+        carrinhos[sender].estado = "opcoes";
+        await client.sendMessage(sender, "⏳ *O período de atendimento humano terminou*\nComo posso ajudar?");
+        await client.sendMessage(sender, mostrarOpcoes());
+        return;
+    }
+
+    if (text.toLowerCase() === 'cliente') {
+        carrinhos[sender] = { itens: [], estado: "escolhendo", ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, atendenteTimer: null };
+        await client.sendMessage(sender, "🔄 *Reiniciando seu pedido...*");
+        await client.sendMessage(sender, mostrarCardapio());
+        return;
+    }
+
+    if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
+        carrinhos[sender].estado = "opcoes";
+        await client.sendMessage(sender, "👋 *Bem-vindo ao DOKA Burger!*");
+        await client.sendMessage(sender, mostrarOpcoes());
+        return;
+    }
+
+    if (text === '5' || text.toLowerCase().includes('cardapio')) {
+        if (fs.existsSync(PDF_PATH)) {
+            const media = MessageMedia.fromFilePath(PDF_PATH);
+            await client.sendMessage(sender, media, { caption: '📄 *Cardápio Completo Smash Burger!*' });
+            carrinhos[sender].ultimoEnvioPdf = agora;
+        } else {
+            await client.sendMessage(sender, "⚠️ *Cardápio temporariamente indisponível.*");
+        }
+        
+        if (carrinhos[sender].estado === "escolhendo") {
+            await client.sendMessage(sender, mostrarCardapio());
+        } else {
+            await client.sendMessage(sender, mostrarOpcoes());
+        }
+        return;
+    }
+
+    if (carrinhos[sender].estado === "escolhendo") {
+        const numeroItem = parseInt(text);
+        const todosItens = [...cardapio.lanches, ...cardapio.bebidas];
+        const itemSelecionado = todosItens.find(item => item.id === numeroItem);
+
+        if (itemSelecionado) {
+            carrinhos[sender].itens.push(itemSelecionado);
+            carrinhos[sender].estado = "opcoes";
+            await client.sendMessage(sender, 
+                `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n` +
+                `💰 Valor: R$ ${itemSelecionado.preco.toFixed(2).replace('.', ',')}\n\n` + 
+                mostrarOpcoes()
+            );
+        } else {
+            await client.sendMessage(sender, 
+                "❌ *Item não encontrado!*\n\n" +
+                "🔢 Por favor, digite apenas o número do item conforme o cardápio:"
+            );
+            await client.sendMessage(sender, mostrarCardapio());
+        }
+        return;
+    }
+
+    if (carrinhos[sender].estado === "opcoes") {
+        switch (text) {
+            case "1":
+                carrinhos[sender].estado = "escolhendo";
+                await client.sendMessage(sender, "📝 *Adicionando mais itens...*");
+                await client.sendMessage(sender, mostrarCardapio());
+                break;
+
+            case "2":
+                if (carrinhos[sender].itens.length === 0) {
+                    await client.sendMessage(sender, "🛒 *Seu carrinho está vazio!*\nAdicione itens antes de finalizar.");
+                    return;
+                }
+                carrinhos[sender].estado = "aguardando_endereco";
+                await client.sendMessage(sender,
+                    "🏠 *INFORME SEU ENDEREÇO*\n\n" +
+                    "Por favor, envie:\n" +
+                    "📍 Rua, Número\n" +
+                    "🏘️ Bairro\n" +
+                    "📌 Ponto de referência\n\n" +
+                    "Exemplo:\n" +
+                    "👉 Rua das Flores, 123\n" +
+                    "👉 Centro\n" +
+                    "👉 Próximo ao mercado"
+                );
+                break;
+
+            case "3":
+                carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, atendenteTimer: null };
+                await client.sendMessage(sender, "🗑️ *Pedido cancelado com sucesso!*\nVolte sempre!");
+                break;
+                
+            case "4":
+                carrinhos[sender].atendenteTimer = Date.now();
+                await client.sendMessage(sender,
+                    "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\n\n" +
+                    "Você será atendido por um de nossos especialistas em hambúrgueres!\n\n" +
+                    "⏳ Tempo de atendimento: 10 minutos\n" +
+                    "⏰ Após esse período, retornaremos ao modo automático"
+                );
+                break;
+
+            default:
+                await client.sendMessage(sender, 
+                    "⚠️ *OPÇÃO INVÁLIDA!*\n\n" +
+                    "Por favor, escolha uma das opções abaixo:"
+                );
+                await client.sendMessage(sender, mostrarOpcoes());
+                break;
+        }
+        return;
+    }
+
+    if (carrinhos[sender].estado === "aguardando_endereco") {
+        if (text.length < 10) {
+            await client.sendMessage(sender, "📢 *Endereço incompleto!*\nPor favor, informe rua, número e bairro.");
+            return;
+        }
+        carrinhos[sender].endereco = text;
+        
+        await client.sendMessage(sender,
+            "💳 *FORMA DE PAGAMENTO* 💳\n\n" +
+            "1. Dinheiro 💵\n" +
+            "2. PIX 📱\n" +
+            "3. Cartão 💳\n\n" +
+            "🔢 Digite o número da opção:"
+        );
+        carrinhos[sender].estado = "escolhendo_pagamento";
+        return;
+    }
+
+    if (carrinhos[sender].estado === "escolhendo_pagamento") {
+        const formas = {
+            "1": "1. Dinheiro 💵",
+            "2": "2. PIX 📱",
+            "3": "3. Cartão 💳"
+        };
+
+        if (formas[text]) {
+            carrinhos[sender].formaPagamento = formas[text];
+
+            if (text === "1") {
+                carrinhos[sender].estado = "aguardando_troco";
+                await client.sendMessage(sender, 
+                    "💵 *Pagamento em dinheiro selecionado*\n\n" +
+                    "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
+                );
+            } else {
+                await client.sendMessage(sender, 
+                    gerarCupomFiscal(
+                        carrinhos[sender].itens, 
+                        carrinhos[sender].endereco, 
+                        carrinhos[sender].formaPagamento
+                    )
+                );
+                await confirmarPedido(sender);
+                carrinhos[sender].estado = "pos_compra";
+            }
+        } else {
+            await client.sendMessage(sender, "❌ Opção inválida. Digite 1, 2 ou 3.");
+        }
+        return;
+    }
+
+    if (carrinhos[sender].estado === "aguardando_troco") {
+        carrinhos[sender].troco = text;
+        await client.sendMessage(sender, 
+            gerarCupomFiscal(
+                carrinhos[sender].itens, 
+                carrinhos[sender].endereco, 
+                carrinhos[sender].formaPagamento,
+                text
+            )
+        );
+        await confirmarPedido(sender);
+        carrinhos[sender].estado = "pos_compra";
+    }
+});
+
+async function confirmarPedido(sender) {
+    await client.sendMessage(sender,
+        "✅ PEDIDO CONFIRMADO! 🎊\n\n" +
+        "*Seu Smash já está sendo preparado com AMOR & CROCÂNCIA! ❤️🍟*\n\n" +
+        "⏱ *Tempo estimado:* 40-50 minutos\n" +
+        "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
+    );
+
+    setTimeout(async () => {
+        await client.sendMessage(sender, 
+            "🛵 *SEU PEDIDO ESTÁ A CAMINHO!*\n\n" +
+            "🔔 Deve chegar em instantes!\n" +
+            "Se já recebeu, ignore esta mensagem."
+        );
+    }, 30 * 60 * 1000);
+}
+
+client.initialize();
+
+// Rota da API para o chat web (frontend)
+app.post('/api/chat', (req, res) => {
+    try {
+        const userMessage = req.body.message;
+        const botResponse = responder(userMessage);
+        res.json({ response: botResponse });
+    } catch (error) {
+        console.error('Erro no chatbot:', error);
+        res.status(500).json({ error: 'Erro interno no servidor' });
+    }
+});
+
+// Função de resposta para o chat web
+function responder(mensagem) {
+    const lowerMsg = mensagem.toLowerCase();
+    
+    const respostas = {
+        'oi': 'Olá! Bem-vindo ao Smash Burger! Como posso ajudar?',
+        'ola': 'Olá! Pronto para fazer seu pedido?',
+        'cardapio': 'Confira nosso cardápio completo: /cardapio',
+        'pedido': 'Para fazer um pedido, acesse nosso WhatsApp',
+        'horario': 'Funcionamos das 18h às 23h todos os dias!',
+        'endereço': 'Estamos na Rua dos Hamburgers, 123 - Centro',
+        'default': 'Desculpe, não entendi. Para atendimento completo, chame no WhatsApp!'
     };
-  </script>
-</body>
-</html>
+
+    return respostas[lowerMsg] || respostas['default'];
+}
+
+// Rota para servir o frontend
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Iniciar servidor
+app.listen(PORT, () => {
+    console.log(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
+    console.log(`🌐 Acesse: http://localhost:${PORT}`);
+    console.log('🔍 Aguardando escaneamento do QR Code...');
+});
