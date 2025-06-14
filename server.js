@@ -81,7 +81,7 @@ function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) 
 }
 
 function mostrarCardapio() {
-    let msg = "🌟 *CARDÁPIO SMASH BURGER* 🌟\n\n";
+    let msg = "🌟 *CARDÁPIO DOKA BURGER* 🌟\n\n";
     msg += "══════════════════════════\n";
     msg += "🍔 *LANCHES*\n";
     msg += "══════════════════════════\n";
@@ -158,7 +158,7 @@ client.on('message', async message => {
 
     if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
         carrinhos[sender].estado = "opcoes";
-        await client.sendMessage(sender, "👋 *Bem-vindo ao Smash Burger!*");
+        await client.sendMessage(sender, "👋 *Bem-vindo ao DOKA Burger!*");
         await client.sendMessage(sender, mostrarOpcoes());
         return;
     }
@@ -324,8 +324,8 @@ client.on('message', async message => {
 
 async function confirmarPedido(sender) {
     await client.sendMessage(sender,
-        "🎉 *PEDIDO CONFIRMADO!* 🎉\n\n" +
-        "👨‍🍳 *Seu hambúrguer está sendo preparado com amor!*\n\n" +
+        "✅ PEDIDO CONFIRMADO! 🎊\n\n" +
+        "*Seu Smash já está sendo preparado com AMOR & CROCÂNCIA! ❤️🍟*\n\n" +
         "⏱ *Tempo estimado:* 40-50 minutos\n" +
         "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
     );
