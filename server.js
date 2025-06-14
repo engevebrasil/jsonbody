@@ -14,7 +14,12 @@ app.use(bodyParser.json());
 app.use(express.static('public'));
 
 // Inicialização do cliente WhatsApp
-const client = new Client();
+const client = new Client({
+    puppeteer: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
+});
+
 let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null} }
 
 const cardapio = {
@@ -37,7 +42,7 @@ const cardapio = {
 // Caminho relativo para o PDF (dentro da pasta public)
 const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
 
-// Funções auxiliares (mantidas como antes)
+// Funções auxiliares
 function formatarTroco(troco) {
     if (troco.toLowerCase() === 'não' || troco.toLowerCase() === 'nao') {
         return 'não';
@@ -108,9 +113,22 @@ function mostrarOpcoes() {
            "🔢 Digite o número da opção:";
 }
 
-// Eventos do WhatsApp
-client.on('qr', qr => qrcode.generate(qr, {small: true}));
-client.on('ready', () => console.log('🤖 Bot pronto e operacional!'));
+// Eventos do WhatsApp - ATUALIZADO PARA QR CODE MELHOR
+client.on('qr', qr => {
+    // QR code no terminal (compacto)
+    qrcode.generate(qr, { small: true });
+    
+    // Link alternativo para escaneamento
+    const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&data=${encodeURIComponent(qr)}`;
+    console.log('\n📢 QR Code alternativo (caso não consiga ler acima):');
+    console.log(qrLink);
+    console.log('⏳ Válido por 60 segundos\n');
+});
+
+client.on('ready', () => {
+    console.log('🤖 Bot pronto e operacional!');
+    console.log(`🕒 Última inicialização: ${new Date().toLocaleTimeString()}`);
+});
 
 client.on('message', async message => {
     const text = message.body.trim();
@@ -337,7 +355,6 @@ app.post('/api/chat', (req, res) => {
 
 // Função de resposta para o chat web
 function responder(mensagem) {
-    // Lógica simplificada para demonstração web
     const lowerMsg = mensagem.toLowerCase();
     
     const respostas = {
@@ -362,4 +379,5 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
     console.log(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
     console.log(`🌐 Acesse: http://localhost:${PORT}`);
+    console.log('🔍 Aguardando escaneamento do QR Code...');
 });
