@@ -1,279 +1,701 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-const path = require('path');
-const qrcode = require('qrcode-terminal');
-const { Client, LocalAuth, List, Buttons } = require('whatsapp-web.js');
-const fs = require('fs');
-const low = require('lowdb');
-const FileSync = require('lowdb/adapters/FileSync');
-const PDFDocument = require('pdfkit');
-const axios = require('axios');
-
-// Configuração do Express
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Middlewares
-app.use(bodyParser.json());
-app.use(express.static('public'));
-
-// Configuração do banco de dados
-const adapter = new FileSync('db.json');
-const db = low(adapter);
-db.defaults({ pedidos: [], clientes: {} }).write();
-
-// Configuração do cliente WhatsApp
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: { 
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
-});
-
-// Cardápio Premium
-const cardapio = {
-    lanches: [
-        { id: 1, nome: "🍔 Smash Burger Clássico", preco: 20.00, descricao: "180g, queijo cheddar, molho especial" },
-        { id: 2, nome: "🥗 Smash! Salada", preco: 23.00, descricao: "180g, mix de folhas, tomate cereja" },
-        { id: 3, nome: "🥓 Salada Bacon", preco: 27.00, descricao: "180g, bacon crocante, cebola caramelizada" },
-        { id: 4, nome: "🍔🍔🍔 Smash!! Triple", preco: 28.00, descricao: "3 hambúrgueres de 120g, triplo queijo" },
-        { id: 5, nome: "🍔🥓 Smash Burger Bacon", preco: 29.99, descricao: "180g, bacon, cebola crispy" },
-        { id: 6, nome: "🍔🍖️ Burger Calabacon", preco: 32.99, descricao: "180g, calabresa, bacon, pimenta jalapeño" }
-    ],
-    bebidas: [
-        { id: 7, nome: "🥤 Coca-Cola 2L", preco: 12.00 },
-        { id: 8, nome: "🥤 Poty Guaraná 2L", preco: 10.00 },
-        { id: 9, nome: "🥤 Coca-Cola Lata", preco: 6.00 },
-        { id: 10, nome: "🥤 Guaraná Lata", preco: 6.00 }
-    ],
-    combos: [
-        { id: 11, nome: "🔥 Combo Família", preco: 89.90, descricao: "3 Smash Clássico + 2 Coca 2L" },
-        { id: 12, nome: "⚡ Combo Turbo", preco: 49.90, descricao: "Smash Triple + Coca Lata" }
-    ],
-    sobremesas: [
-        { id: 13, nome: "🍦 Casquinha", preco: 8.00 },
-        { id: 14, nome: "🍰 Brownie", preco: 12.00 }
-    ]
-};
-
-// Funções Premium
-async function enviarMenuInterativo(sender) {
-    const sections = [{
-        title: "CATEGORIAS",
-        rows: [
-            { id: "lanches", title: "🍔 LANCHES", description: "Nossos hambúrgueres artesanais" },
-            { id: "bebidas", title: "🥤 BEBIDAS", description: "Refrigerantes e sucos" },
-            { id: "combos", title: "🔥 COMBOS", description: "Combos econômicos" },
-            { id: "sobremesas", title: "🍰 SOBREMESAS", description: "Doces para finalizar" },
-            { id: "carrinho", title: "🛒 MEU CARRINHO", description: "Ver itens selecionados" }
-        ]
-    }];
-    
-    const list = new List(
-        '🌟 MENU PRINCIPAL 🌟\nSelecione uma categoria:',
-        'Navegação',
-        sections,
-        'Cardápio Premium'
-    );
-    
-    await client.sendMessage(sender, list);
-}
-
-async function enviarCategoria(sender, categoria) {
-    if (!cardapio[categoria]) return;
-    
-    const rows = cardapio[categoria].map(item => ({
-        id: `item_${item.id}`,
-        title: `${item.nome} - R$ ${item.preco.toFixed(2)}`,
-        description: item.descricao || ''
-    }));
-    
-    const sections = [{ title: categoria.toUpperCase(), rows }];
-    
-    const list = new List(
-        `📋 ${categoria.toUpperCase()}\nSelecione um item:`,
-        'Itens',
-        sections,
-        'Adicionar ao carrinho'
-    );
-    
-    await client.sendMessage(sender, list);
-}
-
-async function mostrarCarrinho(sender, carrinho) {
-    if (carrinho.itens.length === 0) {
-        await client.sendMessage(sender, '🛒 Seu carrinho está vazio!');
-        return;
-    }
-    
-    let message = '🛒 *SEU CARRINHO*\n\n';
-    carrinho.itens.forEach((item, index) => {
-        message += `${index + 1}. ${item.nome} - R$ ${item.preco.toFixed(2)}\n`;
-    });
-    
-    const total = carrinho.itens.reduce((sum, item) => sum + item.preco, 0);
-    message += `\n💵 *TOTAL: R$ ${total.toFixed(2)}*`;
-    
-    const buttons = new Buttons(
-        message,
-        [
-            { id: 'finalizar', body: '✅ FINALIZAR COMPRA' },
-            { id: 'adicionar', body: '➕ ADICIONAR MAIS' },
-            { id: 'remover', body: '➖ REMOVER ITEM' },
-            { id: 'cancelar', body: '❌ CANCELAR' }
-        ],
-        'Opções do Carrinho',
-        'Selecione uma ação:'
-    );
-    
-    await client.sendMessage(sender, buttons);
-}
-
-async function enviarLocalizacao(sender) {
-    await client.sendMessage(sender, 'Por favor, compartilhe sua localização:');
-}
-
-async function enviarConfirmacaoPedido(sender, pedido) {
-    const buttons = new Buttons(
-        `✅ PEDIDO #${pedido.id} CONFIRMADO!\n\nTempo estimado: 40-50 minutos`,
-        [
-            { id: 'status', body: '🔄 STATUS DO PEDIDO' },
-            { id: 'novo', body: '🆕 NOVO PEDIDO' },
-            { id: 'ajuda', body: '❓ AJUDA' }
-        ],
-        'Acompanhamento',
-        'O que deseja fazer?'
-    );
-    
-    await client.sendMessage(sender, buttons);
-}
-
-async function enviarPDFCardapio(sender) {
-    try {
-        const response = await axios.get('https://exemplo.com/cardapio-premium.pdf', {
-            responseType: 'arraybuffer'
-        });
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BurgerBot Premium</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
         
-        const media = new MessageMedia(
-            'application/pdf',
-            response.data.toString('base64'),
-            'cardapio_premium.pdf'
-        );
+        body {
+            background: linear-gradient(135deg, #ff7b25, #ff5e62);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
         
-        await client.sendMessage(sender, media, {
-            caption: '📄 *Cardápio Premium Atualizado*'
-        });
-    } catch (e) {
-        await client.sendMessage(sender, '⚠️ Cardápio temporariamente indisponível');
-    }
-}
-
-// Gerar PDF profissional para o pedido
-async function gerarPDFPedido(pedido) {
-    const doc = new PDFDocument();
-    const filename = path.join(__dirname, 'pedidos', `pedido_${pedido.id}.pdf`);
-    
-    doc.pipe(fs.createWriteStream(filename));
-    
-    // Cabeçalho
-    doc.image(path.join(__dirname, 'assets', 'logo.png'), 50, 45, { width: 100 });
-    doc.fontSize(20).text('DOKA BURGER PREMIUM', 200, 50, { align: 'center' });
-    doc.fontSize(12).text(`Pedido: #${pedido.id}`, 200, 85, { align: 'center' });
-    doc.fontSize(10).text(`Data: ${new Date().toLocaleString('pt-BR')}`, 200, 100, { align: 'center' });
-    
-    // Linha divisória
-    doc.moveTo(50, 120).lineTo(550, 120).stroke();
-    
-    // Itens
-    doc.fontSize(14).text('ITENS:', 50, 140);
-    let y = 160;
-    pedido.itens.forEach(item => {
-        doc.text(`• ${item.nome} - R$ ${item.preco.toFixed(2)}`, 60, y);
-        y += 20;
-    });
-    
-    // Totais
-    doc.moveTo(50, y).lineTo(550, y).stroke();
-    y += 20;
-    doc.text(`Subtotal: R$ ${pedido.subtotal.toFixed(2)}`, 400, y);
-    y += 20;
-    doc.text(`Taxa de Entrega: R$ ${pedido.taxa.toFixed(2)}`, 400, y);
-    y += 20;
-    doc.font('Helvetica-Bold').text(`TOTAL: R$ ${pedido.total.toFixed(2)}`, 400, y);
-    
-    // Informações cliente
-    doc.moveTo(50, y + 30).lineTo(550, y + 30).stroke();
-    doc.font('Helvetica').text('CLIENTE:', 50, y + 50);
-    doc.text(`Nome: ${pedido.cliente.nome}`, 60, y + 70);
-    doc.text(`Telefone: ${pedido.cliente.telefone}`, 60, y + 90);
-    doc.text(`Endereço: ${pedido.endereco}`, 60, y + 110);
-    doc.text(`Pagamento: ${pedido.pagamento}`, 60, y + 130);
-    
-    doc.end();
-    return filename;
-}
-
-// Eventos do WhatsApp
-client.on('qr', qr => {
-    qrcode.generate(qr, { small: true });
-    console.log('📢 QR Code gerado! Escaneie com o WhatsApp');
-});
-
-client.on('ready', () => {
-    console.log('🚀 BOT PREMIUM OPERACIONAL!');
-    console.log(`⏱️ ${new Date().toLocaleString('pt-BR')}`);
-});
-
-client.on('message', async message => {
-    const sender = message.from;
-    const text = message.body.trim();
-    
-    // Inicializar carrinho
-    if (!db.get(`clientes.${sender}`).value()) {
-        db.set(`clientes.${sender}`, { 
-            carrinho: { itens: [], estado: 'inicio' },
-            historico: []
-        }).write();
-    }
-    
-    const cliente = db.get(`clientes.${sender}`).value();
-    const carrinho = cliente.carrinho;
-    
-    // Processar localização
-    if (message.location) {
-        const location = message.location;
-        carrinho.endereco = `Lat: ${location.latitude}, Long: ${location.longitude}`;
-        db.update(`clientes.${sender}`, c => c).write();
-        await client.sendMessage(sender, '📍 Localização recebida! Agora escolha a forma de pagamento:');
-        await enviarOpcoesPagamento(sender);
-        return;
-    }
-    
-    // Processar mensagens
-    switch (carrinho.estado) {
-        case 'inicio':
-            await enviarBoasVindas(sender);
-            carrinho.estado = 'menu';
-            db.update(`clientes.${sender}`, c => c).write();
-            break;
-            
-        case 'menu':
-            if (message.hasButton) {
-                const buttonId = message.selectedButtonId;
-                if (buttonId === 'cardapio') await enviarPDFCardapio(sender);
-                else if (buttonId === 'novopedido') await enviarMenuInterativo(sender);
+        .container {
+            width: 100%;
+            max-width: 900px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 95vh;
+        }
+        
+        header {
+            background: #ff5722;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+        
+        .logo {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        .tag {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #ffeb3b;
+            color: #333;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .chat-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f9f9f9;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            margin-bottom: 15px;
+            border-radius: 18px;
+            position: relative;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .bot-message {
+            background: #e0e0e0;
+            align-self: flex-start;
+            border-bottom-left-radius: 5px;
+        }
+        
+        .user-message {
+            background: #4caf50;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 5px;
+        }
+        
+        .options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .option-btn {
+            background: #ff9800;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 8px 15px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .option-btn:hover {
+            background: #f57c00;
+            transform: translateY(-2px);
+        }
+        
+        .input-container {
+            padding: 15px;
+            background: white;
+            display: flex;
+            border-top: 1px solid #eee;
+        }
+        
+        #user-input {
+            flex: 1;
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 1rem;
+        }
+        
+        #send-btn {
+            background: #ff5722;
+            color: white;
+            border: none;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-left: 10px;
+            cursor: pointer;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+        }
+        
+        #send-btn:hover {
+            background: #e64a19;
+            transform: scale(1.05);
+        }
+        
+        .menu-card {
+            background: white;
+            border-radius: 15px;
+            padding: 15px;
+            margin: 10px 0;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        
+        .menu-header {
+            color: #ff5722;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 2px dashed #ff9800;
+        }
+        
+        .menu-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .menu-item:last-child {
+            border-bottom: none;
+        }
+        
+        .cart {
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 15px;
+            margin-top: 15px;
+        }
+        
+        .cart-header {
+            color: #4caf50;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+        }
+        
+        .cart-total {
+            font-weight: bold;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 2px solid #4caf50;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .action-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .add-btn {
+            background: #4caf50;
+        }
+        
+        .checkout-btn {
+            background: #ff5722;
+        }
+        
+        .cancel-btn {
+            background: #f44336;
+        }
+        
+        .status {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+            padding: 10px;
+            background: #e3f2fd;
+            border-radius: 10px;
+            color: #1976d2;
+        }
+        
+        .status i {
+            margin-right: 10px;
+            font-size: 1.2rem;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                height: 100vh;
+                border-radius: 0;
             }
-            break;
             
-        // ... (outros estados)
-    }
-});
+            .message {
+                max-width: 90%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="tag">PREMIUM</div>
+            <div class="logo">🍔 BURGERBOT</div>
+            <h1>Atendimento Premium</h1>
+            <p>Faça seu pedido de forma rápida e fácil!</p>
+        </header>
+        
+        <div class="chat-container" id="chat-container">
+            <div class="message bot-message">
+                Olá! 👋 Bem-vindo à Hamburgueria Premium!
+                <p>Como posso ajudar você hoje?</p>
+                
+                <div class="options">
+                    <button class="option-btn" onclick="selectOption('fazer-pedido')">🍔 Fazer Pedido</button>
+                    <button class="option-btn" onclick="selectOption('ver-cardapio')">📄 Ver Cardápio</button>
+                    <button class="option-btn" onclick="selectOption('status-pedido')">🔄 Status do Pedido</button>
+                    <button class="option-btn" onclick="selectOption('falar-atendente')">👨‍🍳 Falar com Atendente</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="input-container">
+            <input type="text" id="user-input" placeholder="Digite sua mensagem..." autocomplete="off">
+            <button id="send-btn"><i class="fas fa-paper-plane"></i></button>
+        </div>
+    </div>
 
-// Inicialização
-client.initialize();
-
-app.listen(PORT, () => {
-    console.log(`💎 BOT PREMIUM RODANDO NA PORTA ${PORT}`);
-    console.log('🌐 Dashboard: http://localhost:3000/admin');
-});
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        
+        // Simulação de cardápio
+        const cardapio = {
+            lanches: [
+                { id: 1, nome: "🍔 Smash Burger Clássico", preco: 20.00, descricao: "180g, queijo cheddar, molho especial" },
+                { id: 2, nome: "🥗 Smash! Salada", preco: 23.00, descricao: "180g, mix de folhas, tomate cereja" },
+                { id: 3, nome: "🥓 Salada Bacon", preco: 27.00, descricao: "180g, bacon crocante, cebola caramelizada" },
+                { id: 4, nome: "🍔🍔🍔 Smash!! Triple", preco: 28.00, descricao: "3 hambúrgueres de 120g, triplo queijo" },
+                { id: 5, nome: "🍔🥓 Smash Burger Bacon", preco: 29.99, descricao: "180g, bacon, cebola crispy" }
+            ],
+            bebidas: [
+                { id: 6, nome: "🥤 Coca-Cola 2L", preco: 12.00 },
+                { id: 7, nome: "🥤 Poty Guaraná 2L", preco: 10.00 },
+                { id: 8, nome: "🥤 Coca-Cola Lata", preco: 6.00 },
+                { id: 9, nome: "🥤 Guaraná Lata", preco: 6.00 }
+            ],
+            combos: [
+                { id: 10, nome: "🔥 Combo Família", preco: 89.90, descricao: "3 Smash Clássico + 2 Coca 2L" },
+                { id: 11, nome: "⚡ Combo Turbo", preco: 49.90, descricao: "Smash Triple + Coca Lata" }
+            ]
+        };
+        
+        // Estado do pedido
+        let pedidoAtual = {
+            itens: [],
+            estado: "inicio"
+        };
+        
+        // Função para adicionar mensagens ao chat
+        function addMessage(message, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+            messageDiv.classList.add(isUser ? 'user-message' : 'bot-message');
+            messageDiv.innerHTML = message;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        // Função para mostrar o cardápio
+        function mostrarCardapio() {
+            let html = `
+                <div class="menu-card">
+                    <h3 class="menu-header">🍔 LANCHES</h3>
+            `;
+            
+            cardapio.lanches.forEach(item => {
+                html += `
+                    <div class="menu-item">
+                        <div>
+                            <strong>${item.nome}</strong>
+                            <div><small>${item.descricao}</small></div>
+                        </div>
+                        <div>
+                            R$ ${item.preco.toFixed(2)}
+                            <button class="option-btn" onclick="adicionarAoCarrinho(${item.id})" style="margin-left: 8px; padding: 4px 8px;">+</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                </div>
+                <div class="menu-card">
+                    <h3 class="menu-header">🥤 BEBIDAS</h3>
+            `;
+            
+            cardapio.bebidas.forEach(item => {
+                html += `
+                    <div class="menu-item">
+                        <div>
+                            <strong>${item.nome}</strong>
+                        </div>
+                        <div>
+                            R$ ${item.preco.toFixed(2)}
+                            <button class="option-btn" onclick="adicionarAoCarrinho(${item.id})" style="margin-left: 8px; padding: 4px 8px;">+</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                </div>
+                <div class="menu-card">
+                    <h3 class="menu-header">🔥 COMBOS</h3>
+            `;
+            
+            cardapio.combos.forEach(item => {
+                html += `
+                    <div class="menu-item">
+                        <div>
+                            <strong>${item.nome}</strong>
+                            <div><small>${item.descricao}</small></div>
+                        </div>
+                        <div>
+                            R$ ${item.preco.toFixed(2)}
+                            <button class="option-btn" onclick="adicionarAoCarrinho(${item.id})" style="margin-left: 8px; padding: 4px 8px;">+</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                </div>
+                <div class="options">
+                    <button class="option-btn" onclick="mostrarCarrinho()">🛒 Ver Carrinho</button>
+                    <button class="option-btn" onclick="iniciarAtendimento()">↩️ Voltar</button>
+                </div>
+            `;
+            
+            addMessage(html);
+        }
+        
+        // Função para adicionar item ao carrinho
+        function adicionarAoCarrinho(itemId) {
+            // Encontrar item em todas as categorias
+            let itemSelecionado = null;
+            
+            for (const categoria in cardapio) {
+                const item = cardapio[categoria].find(i => i.id === itemId);
+                if (item) {
+                    itemSelecionado = item;
+                    break;
+                }
+            }
+            
+            if (itemSelecionado) {
+                pedidoAtual.itens.push(itemSelecionado);
+                
+                // Mensagem de confirmação
+                addMessage(`✅ <strong>${itemSelecionado.nome}</strong> adicionado ao carrinho!`);
+                
+                // Mostrar opções
+                setTimeout(() => {
+                    mostrarOpcoesPosAdicao();
+                }, 800);
+            }
+        }
+        
+        // Função para mostrar o carrinho
+        function mostrarCarrinho() {
+            if (pedidoAtual.itens.length === 0) {
+                addMessage("🛒 Seu carrinho está vazio!");
+                mostrarOpcoesPosAdicao();
+                return;
+            }
+            
+            let html = `
+                <div class="cart">
+                    <div class="cart-header">
+                        <h3>🛒 SEU CARRINHO</h3>
+                        <span>${pedidoAtual.itens.length} itens</span>
+                    </div>
+            `;
+            
+            let total = 0;
+            
+            pedidoAtual.itens.forEach((item, index) => {
+                total += item.preco;
+                html += `
+                    <div class="cart-item">
+                        <div>${item.nome}</div>
+                        <div>
+                            R$ ${item.preco.toFixed(2)}
+                            <button class="option-btn" onclick="removerDoCarrinho(${index})" style="margin-left: 8px; padding: 2px 6px; background: #f44336;">✕</button>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            const taxa = total * 0.1;
+            const totalComTaxa = total + taxa;
+            
+            html += `
+                    <div class="cart-total">
+                        <div class="cart-item">
+                            <div>Subtotal:</div>
+                            <div>R$ ${total.toFixed(2)}</div>
+                        </div>
+                        <div class="cart-item">
+                            <div>Taxa de Entrega:</div>
+                            <div>R$ ${taxa.toFixed(2)}</div>
+                        </div>
+                        <div class="cart-item">
+                            <div>Total:</div>
+                            <div><strong>R$ ${totalComTaxa.toFixed(2)}</strong></div>
+                        </div>
+                    </div>
+                    
+                    <div class="action-buttons">
+                        <button class="action-btn add-btn" onclick="mostrarCardapio()">➕ Adicionar Mais</button>
+                        <button class="action-btn checkout-btn" onclick="finalizarPedido()">✅ Finalizar Pedido</button>
+                        <button class="action-btn cancel-btn" onclick="cancelarPedido()">❌ Cancelar</button>
+                    </div>
+                </div>
+            `;
+            
+            addMessage(html);
+        }
+        
+        // Função para remover item do carrinho
+        function removerDoCarrinho(index) {
+            const itemRemovido = pedidoAtual.itens.splice(index, 1)[0];
+            addMessage(`🗑️ <strong>${itemRemovido.nome}</strong> removido do carrinho!`);
+            setTimeout(() => {
+                mostrarCarrinho();
+            }, 800);
+        }
+        
+        // Função para mostrar opções após adicionar item
+        function mostrarOpcoesPosAdicao() {
+            const html = `
+                <p>O que deseja fazer agora?</p>
+                <div class="options">
+                    <button class="option-btn" onclick="mostrarCardapio()">➕ Adicionar Mais Itens</button>
+                    <button class="option-btn" onclick="mostrarCarrinho()">🛒 Ver Carrinho</button>
+                    <button class="option-btn" onclick="finalizarPedido()">✅ Finalizar Pedido</button>
+                    <button class="option-btn" onclick="cancelarPedido()">❌ Cancelar</button>
+                </div>
+            `;
+            
+            addMessage(html);
+        }
+        
+        // Função para finalizar o pedido
+        function finalizarPedido() {
+            if (pedidoAtual.itens.length === 0) {
+                addMessage("⚠️ Seu carrinho está vazio! Adicione itens antes de finalizar.");
+                return;
+            }
+            
+            // Calcular totais
+            let subtotal = 0;
+            pedidoAtual.itens.forEach(item => {
+                subtotal += item.preco;
+            });
+            const taxa = subtotal * 0.1;
+            const total = subtotal + taxa;
+            
+            const html = `
+                <div class="cart">
+                    <h3>✅ PEDIDO CONFIRMADO!</h3>
+                    <p>Seu pedido foi recebido e já está sendo preparado!</p>
+                    
+                    <div class="status">
+                        <i class="fas fa-clock"></i>
+                        <div>Tempo estimado de entrega: 40-50 minutos</div>
+                    </div>
+                    
+                    <div class="cart-header">
+                        <h4>Resumo do Pedido</h4>
+                    </div>
+                    
+                    ${pedidoAtual.itens.map(item => `
+                        <div class="cart-item">
+                            <div>${item.nome}</div>
+                            <div>R$ ${item.preco.toFixed(2)}</div>
+                        </div>
+                    `).join('')}
+                    
+                    <div class="cart-total">
+                        <div class="cart-item">
+                            <div>Subtotal:</div>
+                            <div>R$ ${subtotal.toFixed(2)}</div>
+                        </div>
+                        <div class="cart-item">
+                            <div>Taxa de Entrega:</div>
+                            <div>R$ ${taxa.toFixed(2)}</div>
+                        </div>
+                        <div class="cart-item">
+                            <div>Total:</div>
+                            <div><strong>R$ ${total.toFixed(2)}</strong></div>
+                        </div>
+                    </div>
+                    
+                    <p>Acompanharemos seu pedido e avisaremos quando ele sair para entrega!</p>
+                    
+                    <div class="options">
+                        <button class="option-btn" onclick="iniciarNovoPedido()">🆕 Fazer Novo Pedido</button>
+                        <button class="option-btn" onclick="iniciarAtendimento()">🏠 Voltar ao Início</button>
+                    </div>
+                </div>
+            `;
+            
+            addMessage(html);
+            
+            // Simular atualização de status
+            setTimeout(() => {
+                const html = `
+                    <div class="status">
+                        <i class="fas fa-clock"></i>
+                        <div>Seu pedido está em preparo! (15 minutos)</div>
+                    </div>
+                `;
+                addMessage(html);
+            }, 10000);
+            
+            setTimeout(() => {
+                const html = `
+                    <div class="status">
+                        <i class="fas fa-motorcycle"></i>
+                        <div>Seu pedido saiu para entrega! Chegará em 10-15 minutos.</div>
+                    </div>
+                `;
+                addMessage(html);
+            }, 20000);
+        }
+        
+        // Função para cancelar pedido
+        function cancelarPedido() {
+            pedidoAtual = {
+                itens: [],
+                estado: "inicio"
+            };
+            addMessage("❌ Pedido cancelado com sucesso.");
+            iniciarAtendimento();
+        }
+        
+        // Função para iniciar novo pedido
+        function iniciarNovoPedido() {
+            pedidoAtual = {
+                itens: [],
+                estado: "inicio"
+            };
+            iniciarAtendimento();
+        }
+        
+        // Função para iniciar atendimento
+        function iniciarAtendimento() {
+            const html = `
+                <p>Como posso ajudar você hoje?</p>
+                
+                <div class="options">
+                    <button class="option-btn" onclick="selectOption('fazer-pedido')">🍔 Fazer Pedido</button>
+                    <button class="option-btn" onclick="selectOption('ver-cardapio')">📄 Ver Cardápio</button>
+                    <button class="option-btn" onclick="selectOption('status-pedido')">🔄 Status do Pedido</button>
+                    <button class="option-btn" onclick="selectOption('falar-atendente')">👨‍🍳 Falar com Atendente</button>
+                </div>
+            `;
+            
+            addMessage(html);
+        }
+        
+        // Função para selecionar opção
+        function selectOption(option) {
+            switch(option) {
+                case 'fazer-pedido':
+                case 'ver-cardapio':
+                    mostrarCardapio();
+                    break;
+                case 'status-pedido':
+                    addMessage("🔍 Verificando status do seu último pedido...");
+                    setTimeout(() => {
+                        addMessage("✅ Seu pedido está a caminho! Deve chegar em aproximadamente 15 minutos.");
+                    }, 1500);
+                    break;
+                case 'falar-atendente':
+                    addMessage("👨‍🍳 Conectando você com um de nossos atendentes...");
+                    setTimeout(() => {
+                        addMessage("Olá! Sou o Carlos, atendente da hamburgueria. Em que posso ajudar?");
+                    }, 2000);
+                    break;
+            }
+        }
+        
+        // Event Listeners
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+        
+        function sendMessage() {
+            const message = userInput.value.trim();
+            if (message) {
+                addMessage(message, true);
+                userInput.value = '';
+                
+                // Resposta automática do bot
+                setTimeout(() => {
+                    if (message.toLowerCase().includes('cardápio') || message.toLowerCase().includes('cardapio')) {
+                        mostrarCardapio();
+                    } else if (message.toLowerCase().includes('carrinho')) {
+                        mostrarCarrinho();
+                    } else if (message.toLowerCase().includes('pedido') || message.toLowerCase().includes('finalizar')) {
+                        finalizarPedido();
+                    } else {
+                        addMessage("Entendi! Como posso ajudar?");
+                        mostrarOpcoesPosAdicao();
+                    }
+                }, 1000);
+            }
+        }
+        
+        // Iniciar o chat
+        window.onload = () => {
+            setTimeout(() => {
+                addMessage("Estou aqui para ajudar você a fazer seu pedido de hambúrguer de forma rápida e fácil!");
+            }, 500);
+        };
+    </script>
+</body>
+</html>
