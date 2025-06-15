@@ -54,28 +54,58 @@ function formatarTroco(troco) {
     return `R$ ${inteiro},${centavos}`;
 }
 
+function calcularTotal(itens) {
+    return itens.reduce((sum, item) => sum + item.preco, 0);
+}
+
+function formatarMoeda(valor) {
+    return valor.toFixed(2).replace('.', ',');
+}
+
+// Função para remover emojis dos nomes dos itens
+function removerEmojis(texto) {
+    return texto.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim();
+}
+
+// Cupom fiscal minimalista com formato mais amplo
 function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) {
-    const total = itens.reduce((sum, item) => sum + item.preco, 0);
-    const taxaEntrega = total * 0.1;
-    const subtotal = total - taxaEntrega;
+    const subtotal = calcularTotal(itens);
+    const taxaEntrega = subtotal * 0.1;
+    const total = subtotal + taxaEntrega;
     const now = new Date();
     
-    let cupom = `SMASH BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n\n`;
+    // Cabeçalho mais amplo
+    let cupom = "==================================================\n";
+    cupom += `           DOKA BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n`;
+    cupom += "==================================================\n\n";
 
+    // Itens sem emojis e com alinhamento
     cupom += "ITENS:\n";
     itens.forEach(item => {
-        cupom += `${item.id}. ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+        const nomeSemEmoji = removerEmojis(item.nome);
+        // Formatação mais ampla para os itens
+        cupom += `• ${nomeSemEmoji.padEnd(35)} R$ ${formatarMoeda(item.preco)}\n`;
     });
 
-    cupom += `\nSubtotal: R$ ${subtotal.toFixed(2).replace('.', ',')}`;
-    cupom += `\nTaxa de Entrega (10%): R$ ${taxaEntrega.toFixed(2).replace('.', ',')}`;
-    cupom += `\nTOTAL: R$ ${total.toFixed(2).replace('.', ',')}\n`;
-    cupom += `\nENDEREÇO:\n${endereco}\n`;
-    cupom += `\nFORMA DE PAGAMENTO:\n${formaPagamento}\n`;
+    // Totais formatados
+    cupom += "\n--------------------------------------------------\n";
+    cupom += `Subtotal:         R$ ${formatarMoeda(subtotal)}\n`;
+    cupom += `Taxa de Entrega:  R$ ${formatarMoeda(taxaEntrega)}\n`;
+    cupom += `TOTAL:            R$ ${formatarMoeda(total)}\n\n`;
+
+    // Endereço e pagamento
+    cupom += "ENDEREÇO:\n";
+    cupom += `${endereco}\n\n`;
+    
+    cupom += "FORMA DE PAGAMENTO:\n";
+    cupom += `${formaPagamento}\n`;
 
     if (formaPagamento === "1. Dinheiro 💵" && troco) {
-        cupom += `\nTroco para: ${formatarTroco(troco)}`;
+        cupom += `\nTroco para: ${formatarTroco(troco)}\n`;
     }
+
+    cupom += "\n==================================================\n";
+    cupom += "           OBRIGADO PELA PREFERÊNCIA!";
 
     return cupom;
 }
@@ -86,14 +116,14 @@ function mostrarCardapio() {
     msg += "🍔 *LANCHES*\n";
     msg += "══════════════════════════\n";
     cardapio.lanches.forEach(item => {
-        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+        msg += `🔹 *${item.id}* ${item.nome} - R$ ${formatarMoeda(item.preco)}\n`;
     });
 
     msg += "\n══════════════════════════\n";
     msg += "🥤 *BEBIDAS*\n";
     msg += "══════════════════════════\n";
     cardapio.bebidas.forEach(item => {
-        msg += `🔹 *${item.id}* ${item.nome} - R$ ${item.preco.toFixed(2).replace('.', ',')}\n`;
+        msg += `🔹 *${item.id}* ${item.nome} - R$ ${formatarMoeda(item.preco)}\n`;
     });
 
     msg += "\n══════════════════════════\n";
@@ -104,7 +134,7 @@ function mostrarCardapio() {
 function mostrarOpcoes() {
     return "✨ *O QUE DESEJA FAZER?* ✨\n\n" +
            "══════════════════════════\n" +
-           "1️⃣  Adicionar mais itens\n" +
+           "1️⃣  Adicionar itens\n" +
            "2️⃣  Finalizar compra\n" +
            "3️⃣  Cancelar pedido\n" +
            "4️⃣  Falar com atendente\n" +
@@ -113,12 +143,10 @@ function mostrarOpcoes() {
            "🔢 Digite o número da opção:";
 }
 
-// Eventos do WhatsApp - ATUALIZADO PARA QR CODE MELHOR
+// Eventos do WhatsApp
 client.on('qr', qr => {
-    // QR code no terminal (compacto)
     qrcode.generate(qr, { small: true });
     
-    // Link alternativo para escaneamento
     const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&data=${encodeURIComponent(qr)}`;
     console.log('\n📢 QR Code alternativo (caso não consiga ler acima):');
     console.log(qrLink);
@@ -156,9 +184,10 @@ client.on('message', async message => {
         return;
     }
 
+    // Mensagem de boas-vindas atualizada
     if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
         carrinhos[sender].estado = "opcoes";
-        await client.sendMessage(sender, "👋 *Bem-vindo ao DOKA Burger!*");
+        await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* Cada mordida é uma explosão de felicidade. Preparado para essa experiência incrível? 😃");
         await client.sendMessage(sender, mostrarOpcoes());
         return;
     }
@@ -190,7 +219,7 @@ client.on('message', async message => {
             carrinhos[sender].estado = "opcoes";
             await client.sendMessage(sender, 
                 `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n` +
-                `💰 Valor: R$ ${itemSelecionado.preco.toFixed(2).replace('.', ',')}\n\n` + 
+                `💰 Valor: R$ ${formatarMoeda(itemSelecionado.preco)}\n\n` + 
                 mostrarOpcoes()
             );
         } else {
@@ -207,7 +236,7 @@ client.on('message', async message => {
         switch (text) {
             case "1":
                 carrinhos[sender].estado = "escolhendo";
-                await client.sendMessage(sender, "📝 *Adicionando mais itens...*");
+                await client.sendMessage(sender, "📝 *Adicionando itens...*");
                 await client.sendMessage(sender, mostrarCardapio());
                 break;
 
@@ -220,19 +249,31 @@ client.on('message', async message => {
                 await client.sendMessage(sender,
                     "🏠 *INFORME SEU ENDEREÇO*\n\n" +
                     "Por favor, envie:\n" +
-                    "📍 Rua, Número\n" +
-                    "🏘️ Bairro\n" +
-                    "📌 Ponto de referência\n\n" +
-                    "Exemplo:\n" +
-                    "👉 Rua das Flores, 123\n" +
-                    "👉 Centro\n" +
-                    "👉 Próximo ao mercado"
+                    "🧩  Rua, Número\n" +
+                    "🏘️  Bairro\n" +
+                    "📌  Ponto de referência\n\n" +
+                    "🏆 Exemplo:\n" +
+                    " Rua das Flores, 123    Bairro Centro     Próximo ao mercado"
                 );
                 break;
 
             case "3":
-                carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, atendenteTimer: null };
-                await client.sendMessage(sender, "🗑️ *Pedido cancelado com sucesso!*\nVolte sempre!");
+                carrinhos[sender].estado = "confirmando_cancelamento";
+                await client.sendMessage(sender, 
+                    "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n\n" +
+                    "🔥 Seu pedido está indo para chapa!\n" +
+                    "Mas antes, confirme se realmente quer fazer isso...\n\n" +
+                    "🍔 Você perderá:\n" +
+                    "   • Hambúrgueres suculentos\n" +
+                    "   • Combos incríveis\n" +
+                    "   • Momentos de felicidade\n\n" +
+                    "________________________________\n" +
+                    "🛑 *CONFIRME O CANCELAMENTO:*\n" +
+                    "1. ✅ Sim, cancelar tudo\n" +
+                    "2. ❌ Não, quero continuar\n" +
+                    "________________________________\n" +
+                    "🔢 Digite o número da opção:"
+                );
                 break;
                 
             case "4":
@@ -256,6 +297,38 @@ client.on('message', async message => {
         return;
     }
 
+    // Novo estado para confirmar cancelamento
+    if (carrinhos[sender].estado === "confirmando_cancelamento") {
+        if (text === "1") {
+            carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, atendenteTimer: null };
+            await client.sendMessage(sender, 
+                "🗑️ *PEDIDO CANCELADO!*\n\n" +
+                "💔 Seu hambúrguer foi descartado com sucesso...\n" +
+                "😢 Estamos tristes em vê-lo partir!\n\n" +
+                "⚡ Mas sempre que quiser voltar, estamos aqui!\n" +
+                "🔥 O sabor do arrependimento é amargo, mas nossos burgers são doces!\n\n" +
+                "🔄 Digite *'cliente'* para recomeçar!"
+            );
+        } else if (text === "2") {
+            carrinhos[sender].estado = "opcoes";
+            await client.sendMessage(sender, 
+                "🎉 *PEDIDO MANTIDO!*\n\n" +
+                "🌟 Excelente escolha! Seu hambúrguer está salvo!\n" +
+                "👏 Continue com sua experiência gastronômica!\n\n" +
+                "💬 O que deseja fazer agora?"
+            );
+            await client.sendMessage(sender, mostrarOpcoes());
+        } else {
+            await client.sendMessage(sender, 
+                "❌ *OPÇÃO INVÁLIDA!*\n\n" +
+                "Por favor, escolha:\n" +
+                "1. ✅ Sim, cancelar tudo\n" +
+                "2. ❌ Não, quero continuar"
+            );
+        }
+        return;
+    }
+
     if (carrinhos[sender].estado === "aguardando_endereco") {
         if (text.length < 10) {
             await client.sendMessage(sender, "📢 *Endereço incompleto!*\nPor favor, informe rua, número e bairro.");
@@ -263,8 +336,15 @@ client.on('message', async message => {
         }
         carrinhos[sender].endereco = text;
         
+        // Calcular o total do carrinho
+        const subtotal = calcularTotal(carrinhos[sender].itens);
+        const taxaEntrega = subtotal * 0.1;
+        const valorTotal = subtotal + taxaEntrega;
+        
         await client.sendMessage(sender,
             "💳 *FORMA DE PAGAMENTO* 💳\n\n" +
+            `💰 *TOTAL DO PEDIDO: R$ ${formatarMoeda(valorTotal)}*\n` +
+            `(Itens: R$ ${formatarMoeda(subtotal)} + Entrega: R$ ${formatarMoeda(taxaEntrega)})\n\n` +
             "1. Dinheiro 💵\n" +
             "2. PIX 📱\n" +
             "3. Cartão 💳\n\n" +
@@ -324,8 +404,8 @@ client.on('message', async message => {
 
 async function confirmarPedido(sender) {
     await client.sendMessage(sender,
-        "✅ PEDIDO CONFIRMADO! 🎊\n\n" +
-        "*Seu Smash já está sendo preparado com AMOR & CROCÂNCIA! ❤️🍟*\n\n" +
+        "✅ PEDIDO CONFIRMADO! 🚀\n\n" +
+        "*Sua explosão de sabores está sendo montada! 💣🍔*\n\n" +
         "⏱ *Tempo estimado:* 40-50 minutos\n" +
         "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
     );
@@ -370,8 +450,14 @@ function responder(mensagem) {
     return respostas[lowerMsg] || respostas['default'];
 }
 
-// Rota para servir o frontend
-app.get('*', (req, res) => {
+// SOLUÇÃO DEFINITIVA PARA O ERRO DE ROTAS
+// Rota raiz
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Rota para qualquer outra página - com parâmetro nomeado
+app.get('/:page', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
