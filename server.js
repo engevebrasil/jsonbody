@@ -44,7 +44,7 @@ let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvio
 setInterval(() => {
   const now = Date.now();
   for (const [sender, data] of Object.entries(carrinhos)) {
-    if (now - (data.ultimoEnvioPdf || now) > 86400000) { // 24h sem interação
+    if (now - (data.ultimoEnvioPdf || now) > 20000) { // 20s após confirmação
       delete carrinhos[sender];
       logger.info(`🔄 Carrinho de ${sender} removido por inatividade`);
     }
@@ -518,6 +518,9 @@ async function confirmarPedido(sender) {
         "⏱ *Tempo estimado:* 40-50 minutos\n" +
         "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
     );
+
+    // Atualiza o timestamp para limpeza em 20 segundos
+    carrinhos[sender].ultimoEnvioPdf = Date.now();
 
     setTimeout(async () => {
         await client.sendMessage(sender, 
