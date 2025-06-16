@@ -5,7 +5,7 @@ const qrcode = require('qrcode-terminal');
 const { Client, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 
-// Configuração simplificada de logs (Render-friendly)
+// Configuração simplificada de logs
 const logger = {
   info: (msg) => console.log(`[INFO] ${new Date().toISOString()} - ${msg}`),
   error: (msg) => console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`)
@@ -37,7 +37,7 @@ const client = new Client({
 });
 
 // Estrutura para armazenar dados dos clientes
-let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null, nomeCliente: ""} }
+let carrinhos = {};
 
 // Limpeza a cada 20 segundos
 setInterval(() => {
@@ -93,7 +93,6 @@ function removerEmojis(texto) {
     return texto.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim();
 }
 
-// Cupom fiscal atualizado
 function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null, observacao = null, cliente = null) {
     const subtotal = calcularTotal(itens);
     const taxaEntrega = subtotal * 0.1;
@@ -104,7 +103,6 @@ function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null, 
     cupom += `           DOKA BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n`;
     cupom += "==================================================\n\n";
 
-    // Seção de dados do cliente
     if (cliente) {
         cupom += "👤 *DADOS DO CLIENTE*\n";
         cupom += `Nome: ${cliente.nome}\n`;
@@ -168,13 +166,28 @@ function mostrarCardapio() {
 function mostrarOpcoes() {
     return "✨ *O QUE DESEJA FAZER?* ✨\n\n" +
            "══════════════════════════\n" +
-           "1️⃣  Adicionar itens\n" +
+           "1️⃣  Escolher seu lanche\n" +
            "2️⃣  Finalizar compra\n" +
            "3️⃣  Cancelar pedido\n" +
            "4️⃣  Falar com atendente\n" +
            "5️⃣  📄 Ver Cardápio (PDF)\n" +
+           "6️⃣  ✏️ Editar pedido\n" +
            "══════════════════════════\n" +
            "🔢 Digite o número da opção:";
+}
+
+async function mostrarCarrinhoParaEdicao(sender) {
+    let mensagem = "✏️ *EDIÇÃO DE PEDIDO* ✏️\n\n";
+    mensagem += "🛒 *ITENS NO CARRINHO:*\n";
+    
+    carrinhos[sender].itens.forEach((item, index) => {
+        mensagem += `*${index + 1}.* ${item.nome} - R$ ${formatarMoeda(item.preco)}\n`;
+    });
+    
+    mensagem += "\n🔢 *Digite o número do item que deseja REMOVER* ou\n";
+    mensagem += "0️⃣  *Voltar ao menu anterior*";
+    
+    await client.sendMessage(sender, mensagem);
 }
 
 // Eventos do WhatsApp
@@ -264,11 +277,16 @@ client.on('message', async message => {
         if (itemSelecionado) {
             carrinhos[sender].itens.push(itemSelecionado);
             carrinhos[sender].estado = "opcoes";
-            await client.sendMessage(sender, 
-                `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n` +
-                `💰 Valor: R$ ${formatarMoeda(itemSelecionado.preco)}\n\n` + 
-                mostrarOpcoes()
-            );
+            
+            let mensagemCarrinho = `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n💰 Valor: R$ ${formatarMoeda(itemSelecionado.preco)}\n\n`;
+            mensagemCarrinho += "🛒 *SEU CARRINHO ATUAL:*\n";
+            
+            carrinhos[sender].itens.forEach((item, index) => {
+                mensagemCarrinho += `➡️ ${index + 1}. ${item.nome} - R$ ${formatarMoeda(item.preco)}\n`;
+            });
+            
+            await client.sendMessage(sender, mensagemCarrinho);
+            await client.sendMessage(sender, mostrarOpcoes());
         } else {
             await client.sendMessage(sender, 
                 "❌ *Item não encontrado!*\n\n" +
@@ -331,6 +349,16 @@ client.on('message', async message => {
                 );
                 break;
 
+            case "6":
+                if (carrinhos[sender].itens.length === 0) {
+                    await client.sendMessage(sender, "🛒 *Seu carrinho está vazio!*");
+                    await client.sendMessage(sender, mostrarOpcoes());
+                    return;
+                }
+                carrinhos[sender].estado = "editando_pedido";
+                await mostrarCarrinhoParaEdicao(sender);
+                break;
+
             default:
                 await client.sendMessage(sender, 
                     "⚠️ *OPÇÃO INVÁLIDA!*\n\n" +
@@ -338,6 +366,31 @@ client.on('message', async message => {
                 );
                 await client.sendMessage(sender, mostrarOpcoes());
                 break;
+        }
+        return;
+    }
+
+    if (carrinhos[sender].estado === "editando_pedido") {
+        if (text === "0") {
+            carrinhos[sender].estado = "opcoes";
+            await client.sendMessage(sender, "↩️ Voltando ao menu principal...");
+            await client.sendMessage(sender, mostrarOpcoes());
+        } else {
+            const index = parseInt(text) - 1;
+            if (index >= 0 && index < carrinhos[sender].itens.length) {
+                const itemRemovido = carrinhos[sender].itens.splice(index, 1)[0];
+                await client.sendMessage(sender, `❌ *${itemRemovido.nome}* removido do carrinho!`);
+                
+                if (carrinhos[sender].itens.length > 0) {
+                    await mostrarCarrinhoParaEdicao(sender);
+                } else {
+                    await client.sendMessage(sender, "🛒 *Carrinho vazio!*");
+                    carrinhos[sender].estado = "opcoes";
+                    await client.sendMessage(sender, mostrarOpcoes());
+                }
+            } else {
+                await client.sendMessage(sender, "❌ *Número inválido!* Por favor, digite o número do item ou 0 para voltar.");
+            }
         }
         return;
     }
@@ -481,7 +534,6 @@ client.on('message', async message => {
                     "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
                 );
             } else {
-                // Não envia o cupom aqui, apenas avança para confirmação
                 await confirmarPedido(sender);
             }
         } else {
@@ -498,13 +550,11 @@ client.on('message', async message => {
 
     if (carrinhos[sender].estado === "aguardando_troco") {
         carrinhos[sender].troco = text;
-        // Não envia o cupom aqui, apenas avança para confirmação
         await confirmarPedido(sender);
     }
 });
 
 async function confirmarPedido(sender) {
-    // Extrair todos os dados necessários antes de excluir
     const dadosPedido = {
         itens: [...carrinhos[sender].itens],
         endereco: carrinhos[sender].endereco,
@@ -515,18 +565,15 @@ async function confirmarPedido(sender) {
         telefone: sender
     };
 
-    // Excluir dados imediatamente após extrair
     delete carrinhos[sender];
 
-    // Enviar mensagem de confirmação
     await client.sendMessage(sender,
         "✅ PEDIDO CONFIRMADO! 🚀\n\n" +
-        "*Sua explosão de sabores está sendo montada! 💣🍔*\n\n" +
+        "*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n\n" +
         "⏱ *Tempo estimado:* 40-50 minutos\n" +
         "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
     );
 
-    // Enviar cupom fiscal completo apenas uma vez
     await client.sendMessage(sender, 
         gerarCupomFiscal(
             dadosPedido.itens, 
@@ -541,10 +588,9 @@ async function confirmarPedido(sender) {
         )
     );
 
-    // Agendar mensagem de entrega
     setTimeout(async () => {
         await client.sendMessage(sender, 
-            "🛵 *SEU PEDIDO ESTÁ A CAMINHO!*\n\n" +
+            "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!*\n\n" +
             "🔔 Deve chegar em instantes!\n" +
             "Se já recebeu, ignore esta mensagem."
         );
