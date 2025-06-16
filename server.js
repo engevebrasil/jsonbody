@@ -28,28 +28,27 @@ const client = new Client({
   puppeteer: {
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
     headless: true,
-    // ↓ Otimizações adicionais ↓
     ignoreHTTPSErrors: true,
-    defaultViewport: { width: 10, height: 10 } // Reduz uso de GPU
+    defaultViewport: { width: 10, height: 10 }
   },
-  // ↓ Força uso de cache e reduz verificações ↓
   session: fs.existsSync('./session.json') ? require('./session.json') : null,
   restartOnAuthFail: true,
   takeoverOnConflict: true
 });
 
-let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null} }
+// Estrutura para armazenar dados dos clientes
+let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null, nomeCliente: ""} }
 
-// Limpeza a cada 1h (3600000ms)
+// Limpeza a cada 20 segundos
 setInterval(() => {
   const now = Date.now();
   for (const [sender, data] of Object.entries(carrinhos)) {
-    if (now - (data.ultimoEnvioPdf || now) > 20000) { // 20s após confirmação
+    if (now - (data.ultimoEnvioPdf || now) > 20000) {
       delete carrinhos[sender];
       logger.info(`🔄 Carrinho de ${sender} removido por inatividade`);
     }
   }
-}, 3600000);
+}, 20000);
 
 const cardapio = {
     lanches: [
@@ -68,7 +67,6 @@ const cardapio = {
     ]
 };
 
-// Caminho relativo para o PDF (dentro da pasta public)
 const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
 
 // Funções auxiliares
@@ -91,45 +89,45 @@ function formatarMoeda(valor) {
     return valor.toFixed(2).replace('.', ',');
 }
 
-// Função para remover emojis dos nomes dos itens
 function removerEmojis(texto) {
     return texto.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim();
 }
 
-// Cupom fiscal minimalista com formato mais amplo (atualizado para incluir observações)
-function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null, observacao = null) {
+// Cupom fiscal atualizado
+function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null, observacao = null, cliente = null) {
     const subtotal = calcularTotal(itens);
     const taxaEntrega = subtotal * 0.1;
     const total = subtotal + taxaEntrega;
     const now = new Date();
     
-    // Cabeçalho mais amplo
     let cupom = "==================================================\n";
     cupom += `           DOKA BURGER - Pedido em ${now.toLocaleDateString('pt-BR')} às ${now.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'})}\n`;
     cupom += "==================================================\n\n";
 
-    // Itens sem emojis e com alinhamento
+    // Seção de dados do cliente
+    if (cliente) {
+        cupom += "👤 *DADOS DO CLIENTE*\n";
+        cupom += `Nome: ${cliente.nome}\n`;
+        cupom += `Telefone: ${cliente.telefone}\n\n`;
+    }
+
     cupom += "ITENS:\n";
     itens.forEach(item => {
         const nomeSemEmoji = removerEmojis(item.nome);
-        // Formatação mais ampla para os itens
         cupom += `• ${nomeSemEmoji.padEnd(35)} R$ ${formatarMoeda(item.preco)}\n`;
     });
 
-    // Adicionar observação se existir
     if (observacao) {
         cupom += "\n--------------------------------------------------\n";
         cupom += "OBSERVAÇÃO:\n";
         cupom += `${observacao}\n`;
     }
 
-    // Totais formatados
     cupom += "\n--------------------------------------------------\n";
     cupom += `Subtotal:         R$ ${formatarMoeda(subtotal)}\n`;
     cupom += `Taxa de Entrega:  R$ ${formatarMoeda(taxaEntrega)}\n`;
     cupom += `TOTAL:            R$ ${formatarMoeda(total)}\n\n`;
 
-    // Endereço e pagamento
     cupom += "ENDEREÇO:\n";
     cupom += `${endereco}\n\n`;
     
@@ -199,8 +197,16 @@ client.on('message', async message => {
     const sender = message.from;
     const agora = Date.now();
 
+    // Captura nome do cliente na primeira mensagem
     if (!carrinhos[sender]) {
-        carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: 0, atendenteTimer: null };
+        carrinhos[sender] = { 
+            itens: [], 
+            estado: "inicio", 
+            ultimoEnvioPdf: 0, 
+            atendenteTimer: null,
+            nomeCliente: message._data.notifyName || "Cliente"
+        };
+        logger.info(`👤 Novo cliente registrado: ${carrinhos[sender].nomeCliente} (${sender})`);
     }
 
     if (carrinhos[sender].atendenteTimer && (agora - carrinhos[sender].atendenteTimer < 600000)) {
@@ -214,13 +220,18 @@ client.on('message', async message => {
     }
 
     if (text.toLowerCase() === 'cliente') {
-        carrinhos[sender] = { itens: [], estado: "escolhendo", ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, atendenteTimer: null };
+        carrinhos[sender] = { 
+            itens: [], 
+            estado: "escolhendo", 
+            ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, 
+            atendenteTimer: null,
+            nomeCliente: carrinhos[sender].nomeCliente
+        };
         await client.sendMessage(sender, "🔄 *Reiniciando seu pedido...*");
         await client.sendMessage(sender, mostrarCardapio());
         return;
     }
 
-    // Mensagem de boas-vindas atualizada
     if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
         carrinhos[sender].estado = "opcoes";
         await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* Cada mordida é uma explosão de felicidade. Preparado para essa experiência incrível? 😃 aberto das 18:00 as 23:00");
@@ -331,7 +342,6 @@ client.on('message', async message => {
         return;
     }
 
-    // Novo estado para perguntar sobre observação
     if (carrinhos[sender].estado === "perguntando_observacao") {
         if (text === "1") {
             carrinhos[sender].estado = "aguardando_observacao";
@@ -361,7 +371,6 @@ client.on('message', async message => {
         return;
     }
 
-    // Estado para capturar a observação do cliente
     if (carrinhos[sender].estado === "aguardando_observacao") {
         carrinhos[sender].observacao = text;
         carrinhos[sender].estado = "aguardando_endereco";
@@ -378,15 +387,19 @@ client.on('message', async message => {
         return;
     }
 
-    // Novo estado para confirmar cancelamento
     if (carrinhos[sender].estado === "confirmando_cancelamento") {
         if (text === "1") {
-            carrinhos[sender] = { itens: [], estado: "inicio", ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, atendenteTimer: null };
+            carrinhos[sender] = { 
+                itens: [], 
+                estado: "inicio", 
+                ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, 
+                atendenteTimer: null,
+                nomeCliente: carrinhos[sender].nomeCliente
+            };
             await client.sendMessage(sender, 
                 "🗑️ *PEDIDO CANCELADO!*\n\n" +
                 "😢 Estamos tristes em vê-lo partir!\n\n" +
                 "⚡ Mas sempre que quiser voltar, estamos aqui!\n" +
-                
                 "🔄 Digite *'cliente'* para recomeçar!"
             );
         } else if (text === "2") {
@@ -416,7 +429,6 @@ client.on('message', async message => {
         }
         carrinhos[sender].endereco = text;
         
-        // Calcular o total do carrinho
         const subtotal = calcularTotal(carrinhos[sender].itens);
         const taxaEntrega = subtotal * 0.1;
         const valorTotal = subtotal + taxaEntrega;
@@ -435,7 +447,6 @@ client.on('message', async message => {
         return;
     }
 
-    // MENU DE PAGAMENTO ATUALIZADO COM OPÇÃO DE CANCELAMENTO
     if (carrinhos[sender].estado === "escolhendo_pagamento") {
         const formas = {
             "1": "1. Dinheiro 💵",
@@ -445,7 +456,6 @@ client.on('message', async message => {
         };
 
         if (formas[text]) {
-            // TRATAMENTO DA NOVA OPÇÃO 4 (CANCELAMENTO)
             if (text === "4") {
                 carrinhos[sender].estado = "confirmando_cancelamento";
                 await client.sendMessage(sender, 
@@ -459,7 +469,7 @@ client.on('message', async message => {
                     "________________________________\n" +
                     "🔢 Digite o número da opção:"
                 );
-                return;  // IMPORTANTE: return para evitar execução do fluxo normal
+                return;
             }
             
             carrinhos[sender].formaPagamento = formas[text];
@@ -471,17 +481,8 @@ client.on('message', async message => {
                     "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
                 );
             } else {
-                await client.sendMessage(sender, 
-                    gerarCupomFiscal(
-                        carrinhos[sender].itens, 
-                        carrinhos[sender].endereco, 
-                        carrinhos[sender].formaPagamento,
-                        null, // troco
-                        carrinhos[sender].observacao // nova observação
-                    )
-                );
+                // Não envia o cupom aqui, apenas avança para confirmação
                 await confirmarPedido(sender);
-                carrinhos[sender].estado = "pos_compra";
             }
         } else {
             await client.sendMessage(sender, 
@@ -497,21 +498,27 @@ client.on('message', async message => {
 
     if (carrinhos[sender].estado === "aguardando_troco") {
         carrinhos[sender].troco = text;
-        await client.sendMessage(sender, 
-            gerarCupomFiscal(
-                carrinhos[sender].itens, 
-                carrinhos[sender].endereco, 
-                carrinhos[sender].formaPagamento,
-                text,
-                carrinhos[sender].observacao // nova observação
-            )
-        );
+        // Não envia o cupom aqui, apenas avança para confirmação
         await confirmarPedido(sender);
-        carrinhos[sender].estado = "pos_compra";
     }
 });
 
 async function confirmarPedido(sender) {
+    // Extrair todos os dados necessários antes de excluir
+    const dadosPedido = {
+        itens: [...carrinhos[sender].itens],
+        endereco: carrinhos[sender].endereco,
+        formaPagamento: carrinhos[sender].formaPagamento,
+        troco: carrinhos[sender].troco || null,
+        observacao: carrinhos[sender].observacao || null,
+        nomeCliente: carrinhos[sender].nomeCliente,
+        telefone: sender
+    };
+
+    // Excluir dados imediatamente após extrair
+    delete carrinhos[sender];
+
+    // Enviar mensagem de confirmação
     await client.sendMessage(sender,
         "✅ PEDIDO CONFIRMADO! 🚀\n\n" +
         "*Sua explosão de sabores está sendo montada! 💣🍔*\n\n" +
@@ -519,9 +526,22 @@ async function confirmarPedido(sender) {
         "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
     );
 
-    // Atualiza o timestamp para limpeza em 20 segundos
-    carrinhos[sender].ultimoEnvioPdf = Date.now();
+    // Enviar cupom fiscal completo apenas uma vez
+    await client.sendMessage(sender, 
+        gerarCupomFiscal(
+            dadosPedido.itens, 
+            dadosPedido.endereco, 
+            dadosPedido.formaPagamento,
+            dadosPedido.troco,
+            dadosPedido.observacao,
+            { 
+                nome: dadosPedido.nomeCliente, 
+                telefone: dadosPedido.telefone 
+            }
+        )
+    );
 
+    // Agendar mensagem de entrega
     setTimeout(async () => {
         await client.sendMessage(sender, 
             "🛵 *SEU PEDIDO ESTÁ A CAMINHO!*\n\n" +
@@ -531,7 +551,7 @@ async function confirmarPedido(sender) {
     }, 30 * 60 * 1000);
 }
 
-// Tratamento de desconexão do WhatsApp (Render-friendly)
+// Tratamento de desconexão
 let reconnectAttempts = 0;
 
 client.on('disconnected', async (reason) => {
@@ -539,7 +559,7 @@ client.on('disconnected', async (reason) => {
     logger.error(`WhatsApp desconectado (motivo: ${reason}). Tentando reconectar... ${reconnectAttempts}/3`);
 
     if (reconnectAttempts <= 3) {
-        await new Promise(resolve => setTimeout(resolve, 10000)); // Espera 10s
+        await new Promise(resolve => setTimeout(resolve, 10000));
         client.initialize();
     } else {
         logger.error("Limite de reconexões atingido. Reinicie o serviço manualmente.");
@@ -548,7 +568,7 @@ client.on('disconnected', async (reason) => {
 
 client.initialize();
 
-// Rota da API para o chat web (frontend)
+// Rota da API para o chat web
 app.post('/api/chat', (req, res) => {
     try {
         const userMessage = req.body.message;
@@ -560,7 +580,6 @@ app.post('/api/chat', (req, res) => {
     }
 });
 
-// Função de resposta para o chat web
 function responder(mensagem) {
     const lowerMsg = mensagem.toLowerCase();
     
@@ -577,12 +596,11 @@ function responder(mensagem) {
     return respostas[lowerMsg] || respostas['default'];
 }
 
-// Rota raiz
+// Rotas
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Rota para qualquer outra página - com parâmetro nomeado
 app.get('/:page', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
