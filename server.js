@@ -5,6 +5,16 @@ const qrcode = require('qrcode-terminal');
 const { Client, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 
+// Configuração simplificada de logs (Render-friendly)
+const logger = {
+  info: (msg) => console.log(`[INFO] ${new Date().toISOString()} - ${msg}`),
+  error: (msg) => console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`)
+};
+
+if (process.env.RENDER) {
+  logger.info("✅ Rodando no Render.com");
+}
+
 // Configuração do Express
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,27 +25,46 @@ app.use(express.static('public'));
 
 // Inicialização do cliente WhatsApp
 const client = new Client({
-    puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    }
+  puppeteer: {
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    headless: true,
+    // ↓ Otimizações adicionais ↓
+    ignoreHTTPSErrors: true,
+    defaultViewport: { width: 10, height: 10 } // Reduz uso de GPU
+  },
+  // ↓ Força uso de cache e reduz verificações ↓
+  session: fs.existsSync('./session.json') ? require('./session.json') : null,
+  restartOnAuthFail: true,
+  takeoverOnConflict: true
 });
 
 let carrinhos = {}; // { "5511999999999": {itens: [], estado: "...", ultimoEnvioPdf: timestamp, atendenteTimer: null} }
 
+// Limpeza a cada 1h (3600000ms)
+setInterval(() => {
+  const now = Date.now();
+  for (const [sender, data] of Object.entries(carrinhos)) {
+    if (now - (data.ultimoEnvioPdf || now) > 86400000) { // 24h sem interação
+      delete carrinhos[sender];
+      logger.info(`🔄 Carrinho de ${sender} removido por inatividade`);
+    }
+  }
+}, 3600000);
+
 const cardapio = {
     lanches: [
-        { id: 1, nome: "🍔 Smash Burger Clássico", preco: 20.00 },
-        { id: 2, nome: "🥗 Smash! Salada", preco: 23.00 },
-        { id: 3, nome: "🥓 Salada Bacon", preco: 27.00 },
-        { id: 4, nome: "🍔🍔🍔 Smash!! Triple", preco: 28.00 },
-        { id: 5, nome: "🍔🥓 Smash Burger Bacon", preco: 29.99 },
-        { id: 6, nome: "🍔🍖️ Burger Calabacon", preco: 32.99 }
+        { id: 1, nome: " Smash Burger Clássico", preco: 20.00 },
+        { id: 2, nome: " Smash! Salada", preco: 23.00 },
+        { id: 3, nome: " Salada Bacon", preco: 27.00 },
+        { id: 4, nome: " Smash!! Triple", preco: 28.00 },
+        { id: 5, nome: " Smash Burger Bacon", preco: 29.99 },
+        { id: 6, nome: " Burger Calabacon", preco: 32.99 }
     ],
     bebidas: [
-        { id: 7, nome: "🥤 Coca-Cola 2L", preco: 12.00 },
-        { id: 8, nome: "🥤 Poty Guaraná 2L", preco: 10.00 },
-        { id: 9, nome: "🥤 Coca-Cola Lata", preco: 6.00 },
-        { id: 10, nome: "🥤 Guaraná Lata", preco: 6.00 }
+        { id: 7, nome: " Coca-Cola 2L", preco: 12.00 },
+        { id: 8, nome: " Poty Guaraná 2L", preco: 10.00 },
+        { id: 9, nome: " Coca-Cola Lata", preco: 6.00 },
+        { id: 10, nome:" Guaraná Lata", preco: 6.00 }
     ]
 };
 
@@ -67,8 +96,8 @@ function removerEmojis(texto) {
     return texto.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').trim();
 }
 
-// Cupom fiscal minimalista com formato mais amplo
-function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) {
+// Cupom fiscal minimalista com formato mais amplo (atualizado para incluir observações)
+function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null, observacao = null) {
     const subtotal = calcularTotal(itens);
     const taxaEntrega = subtotal * 0.1;
     const total = subtotal + taxaEntrega;
@@ -86,6 +115,13 @@ function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null) 
         // Formatação mais ampla para os itens
         cupom += `• ${nomeSemEmoji.padEnd(35)} R$ ${formatarMoeda(item.preco)}\n`;
     });
+
+    // Adicionar observação se existir
+    if (observacao) {
+        cupom += "\n--------------------------------------------------\n";
+        cupom += "OBSERVAÇÃO:\n";
+        cupom += `${observacao}\n`;
+    }
 
     // Totais formatados
     cupom += "\n--------------------------------------------------\n";
@@ -148,14 +184,14 @@ client.on('qr', qr => {
     qrcode.generate(qr, { small: true });
     
     const qrLink = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=15&data=${encodeURIComponent(qr)}`;
-    console.log('\n📢 QR Code alternativo (caso não consiga ler acima):');
-    console.log(qrLink);
-    console.log('⏳ Válido por 60 segundos\n');
+    logger.info('\n📢 QR Code alternativo (caso não consiga ler acima):');
+    logger.info(qrLink);
+    logger.info('⏳ Válido por 60 segundos\n');
 });
 
 client.on('ready', () => {
-    console.log('🤖 Bot pronto e operacional!');
-    console.log(`🕒 Última inicialização: ${new Date().toLocaleTimeString()}`);
+    logger.info('🤖 Bot pronto e operacional!');
+    logger.info(`🕒 Última inicialização: ${new Date().toLocaleTimeString()}`);
 });
 
 client.on('message', async message => {
@@ -245,15 +281,13 @@ client.on('message', async message => {
                     await client.sendMessage(sender, "🛒 *Seu carrinho está vazio!*\nAdicione itens antes de finalizar.");
                     return;
                 }
-                carrinhos[sender].estado = "aguardando_endereco";
+                carrinhos[sender].estado = "perguntando_observacao";
                 await client.sendMessage(sender,
-                    "🏠 *INFORME SEU ENDEREÇO*\n\n" +
-                    "Por favor, envie:\n" +
-                    "🧩  Rua, Número\n" +
-                    "🏘️  Bairro\n" +
-                    "📌  Ponto de referência\n\n" +
-                    "🏆 Exemplo:\n" +
-                    " Rua das Flores, 123    Bairro Centro     Próximo ao mercado"
+                    "📝 *DESEJA ADICIONAR ALGUMA OBSERVAÇÃO?*\n\n" +
+                    "Ex: sem cebola, ponto da carne, etc.\n\n" +
+                    "1. Sim\n" +
+                    "2. Não\n\n" +
+                    "🔢 Digite o número da opção:"
                 );
                 break;
 
@@ -294,6 +328,53 @@ client.on('message', async message => {
                 await client.sendMessage(sender, mostrarOpcoes());
                 break;
         }
+        return;
+    }
+
+    // Novo estado para perguntar sobre observação
+    if (carrinhos[sender].estado === "perguntando_observacao") {
+        if (text === "1") {
+            carrinhos[sender].estado = "aguardando_observacao";
+            await client.sendMessage(sender, 
+                "✍️ *POR FAVOR, DIGITE SUA OBSERVAÇÃO:*\n\n" +
+                "Ex: Sem cebola, carne bem passada, etc."
+            );
+        } else if (text === "2") {
+            carrinhos[sender].estado = "aguardando_endereco";
+            await client.sendMessage(sender,
+                "🏠 *INFORME SEU ENDEREÇO*\n\n" +
+                "Por favor, envie:\n" +
+                "🧩  Rua, Número\n" +
+                "🏘️  Bairro\n" +
+                "📌  Ponto de referência\n\n" +
+                "🏆 Exemplo:\n" +
+                " Rua das Flores, 123    Bairro Centro     Próximo ao mercado"
+            );
+        } else {
+            await client.sendMessage(sender, 
+                "❌ *OPÇÃO INVÁLIDA!*\n\n" +
+                "Por favor, digite:\n" +
+                "1. Sim\n" +
+                "2. Não"
+            );
+        }
+        return;
+    }
+
+    // Estado para capturar a observação do cliente
+    if (carrinhos[sender].estado === "aguardando_observacao") {
+        carrinhos[sender].observacao = text;
+        carrinhos[sender].estado = "aguardando_endereco";
+        await client.sendMessage(sender, "✅ Observação salva com sucesso!");
+        await client.sendMessage(sender,
+            "🏠 *INFORME SEU ENDEREÇO*\n\n" +
+            "Por favor, envie:\n" +
+            "🧩  Rua, Número\n" +
+            "🏘️  Bairro\n" +
+            "📌  Ponto de referência\n\n" +
+            "🏆 Exemplo:\n" +
+            " Rua das Flores, 123    Bairro Centro     Próximo ao mercado"
+        );
         return;
     }
 
@@ -347,7 +428,7 @@ client.on('message', async message => {
             "1. Dinheiro 💵\n" +
             "2. PIX 📱\n" +
             "3. Cartão 💳\n" +
-            "4. ❌ Cancelar pedido\n\n" +  // Opção 4 adicionada aqui
+            "4. ❌ Cancelar pedido\n\n" +
             "🔢 Digite o número da opção:"
         );
         carrinhos[sender].estado = "escolhendo_pagamento";
@@ -360,7 +441,7 @@ client.on('message', async message => {
             "1": "1. Dinheiro 💵",
             "2": "2. PIX 📱",
             "3": "3. Cartão 💳",
-            "4": "4. ❌ Cancelar pedido"  // NOVA OPÇÃO ADICIONADA
+            "4": "4. ❌ Cancelar pedido"
         };
 
         if (formas[text]) {
@@ -394,7 +475,9 @@ client.on('message', async message => {
                     gerarCupomFiscal(
                         carrinhos[sender].itens, 
                         carrinhos[sender].endereco, 
-                        carrinhos[sender].formaPagamento
+                        carrinhos[sender].formaPagamento,
+                        null, // troco
+                        carrinhos[sender].observacao // nova observação
                     )
                 );
                 await confirmarPedido(sender);
@@ -419,7 +502,8 @@ client.on('message', async message => {
                 carrinhos[sender].itens, 
                 carrinhos[sender].endereco, 
                 carrinhos[sender].formaPagamento,
-                text
+                text,
+                carrinhos[sender].observacao // nova observação
             )
         );
         await confirmarPedido(sender);
@@ -444,6 +528,21 @@ async function confirmarPedido(sender) {
     }, 30 * 60 * 1000);
 }
 
+// Tratamento de desconexão do WhatsApp (Render-friendly)
+let reconnectAttempts = 0;
+
+client.on('disconnected', async (reason) => {
+    reconnectAttempts++;
+    logger.error(`WhatsApp desconectado (motivo: ${reason}). Tentando reconectar... ${reconnectAttempts}/3`);
+
+    if (reconnectAttempts <= 3) {
+        await new Promise(resolve => setTimeout(resolve, 10000)); // Espera 10s
+        client.initialize();
+    } else {
+        logger.error("Limite de reconexões atingido. Reinicie o serviço manualmente.");
+    }
+});
+
 client.initialize();
 
 // Rota da API para o chat web (frontend)
@@ -453,7 +552,7 @@ app.post('/api/chat', (req, res) => {
         const botResponse = responder(userMessage);
         res.json({ response: botResponse });
     } catch (error) {
-        console.error('Erro no chatbot:', error);
+        logger.error('Erro no chatbot:', error);
         res.status(500).json({ error: 'Erro interno no servidor' });
     }
 });
@@ -475,7 +574,6 @@ function responder(mensagem) {
     return respostas[lowerMsg] || respostas['default'];
 }
 
-// SOLUÇÃO DEFINITIVA PARA O ERRO DE ROTAS
 // Rota raiz
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -488,7 +586,7 @@ app.get('/:page', (req, res) => {
 
 // Iniciar servidor
 app.listen(PORT, () => {
-    console.log(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
-    console.log(`🌐 Acesse: http://localhost:${PORT}`);
-    console.log('🔍 Aguardando escaneamento do QR Code...');
+    logger.info(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
+    logger.info(`🌐 Acesse: http://localhost:${PORT}`);
+    logger.info('🔍 Aguardando escaneamento do QR Code...');
 });
