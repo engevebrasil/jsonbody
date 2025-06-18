@@ -240,12 +240,13 @@ client.on('message', async message => {
     const numeroItem = parseInt(text);
     const todosItens = [...cardapio.lanches, ...cardapio.bebidas];
     const itemSelecionado = todosItens.find(item => item.id === numeroItem);
+
     if (itemSelecionado) {
       carrinhos[sender].itens.push(itemSelecionado);
       carrinhos[sender].estado = "opcoes";
       let mensagemCarrinho = `✅ *${itemSelecionado.nome}* adicionado ao carrinho!\n`;
       mensagemCarrinho += `💰 Valor: R$ ${formatarMoeda(itemSelecionado.preco)}\n`;
-      mensagemCarrinho += "🛒 *SEU CARRINHO ATUAL:*\n";
+      mensagemCarrinho += "🛒 *SEU CARRINHO ATUAL:\n";
       carrinhos[sender].itens.forEach((item, index) => {
         mensagemCarrinho += `➡️ ${index + 1}. ${item.nome} - R$ ${formatarMoeda(item.preco)}\n`;
       });
@@ -253,26 +254,9 @@ client.on('message', async message => {
       await client.sendMessage(sender, mostrarOpcoes());
     } else {
       await client.sendMessage(sender, 
-        "❌ *Item não encontrado!*\n" +
-        "🔢 Por favor, digite apenas o número do item conforme o cardápio:"
+        "❌ *Item não encontrado!*\n🔢 Por favor, digite apenas o número do item conforme o cardápio:"
       );
       await client.sendMessage(sender, mostrarCardapio());
-    }
-    return;
-  }
-
-  if (text === '5' || text.toLowerCase().includes('cardapio')) {
-    if (fs.existsSync(PDF_PATH)) {
-      const media = MessageMedia.fromFilePath(PDF_PATH);
-      await client.sendMessage(sender, media, { caption: '📄 *Cardápio Completo Smash Burger!*' });
-      carrinhos[sender].ultimoEnvioPdf = agora;
-    } else {
-      await client.sendMessage(sender, "⚠️ *Cardápio temporariamente indisponível.*");
-    }
-    if (carrinhos[sender].estado === "escolhendo") {
-      await client.sendMessage(sender, mostrarCardapio());
-    } else {
-      await client.sendMessage(sender, mostrarOpcoes());
     }
     return;
   }
@@ -291,39 +275,30 @@ client.on('message', async message => {
         }
         carrinhos[sender].estado = "perguntando_observacao";
         await client.sendMessage(sender,
-          "📝 *DESEJA ADICIONAR ALGUMA OBSERVAÇÃO?*\n" +
-          "Ex: sem cebola, ponto da carne, etc.\n" +
-          "1. Sim\n" +
-          "2. Não\n" +
-          "🔢 Digite o número da opção:"
+          "📝 *DESEJA ADICIONAR ALGUMA OBSERVAÇÃO?*\nEx: sem cebola, ponto da carne, etc.\n1. Sim\n2. Não\n🔢 Digite o número da opção:"
         );
         break;
       case "3":
         carrinhos[sender].estado = "confirmando_cancelamento";
         await client.sendMessage(sender, 
-          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n" +
-          "🔥 Seu pedido está indo para chapa!\n" +
-          "Mas antes, confirme se realmente quer fazer isso...\n" +
-          "🍔 Você perderá:\n" +
-          "   • Hambúrgueres suculentos\n" +
-          "   • Combos incríveis\n" +
-          "   • Momentos de felicidade\n" +
-          "________________________________\n" +
-          "🛑 *CONFIRME O CANCELAMENTO:*\n" +
-          "1. ✅ Sim, cancelar tudo\n" +
-          "2. ❌ Não, quero continuar\n" +
-          "________________________________\n" +
-          "🔢 Digite o número da opção:"
+          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n🔥 Seu pedido está indo para chapa!\nMas antes, confirme se realmente quer fazer isso...\nVocê perderá:\n• Hambúrgueres suculentos\n• Combos incríveis\n• Momentos de felicidade\n________________________________\n🛑 *CONFIRME O CANCELAMENTO:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar\n________________________________\n🔢 Digite o número da opção:"
         );
         break;
       case "4":
         carrinhos[sender].atendenteTimer = Date.now();
         await client.sendMessage(sender,
-          "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\n" +
-          "Você será atendido por um de nossos especialistas em hambúrgueres!\n" +
-          "⏳ Tempo de atendimento: 10 minutos\n" +
-          "⏰ Após esse período, retornaremos ao modo automático"
+          "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\nVocê será atendido por um de nossos especialistas em hambúrgueres!\n⏳ Tempo de atendimento: 10 minutos\n⏰ Após esse período, retornaremos ao modo automático"
         );
+        break;
+      case "5":
+        if (fs.existsSync(PDF_PATH)) {
+          const media = MessageMedia.fromFilePath(PDF_PATH);
+          await client.sendMessage(sender, media, { caption: '📄 *Cardápio Completo Smash Burger!*' });
+          carrinhos[sender].ultimoEnvioPdf = agora;
+        } else {
+          await client.sendMessage(sender, "⚠️ *Cardápio temporariamente indisponível.*");
+        }
+        await client.sendMessage(sender, mostrarOpcoes());
         break;
       case "6":
         if (carrinhos[sender].itens.length === 0) {
@@ -336,8 +311,7 @@ client.on('message', async message => {
         break;
       default:
         await client.sendMessage(sender, 
-          "⚠️ *OPÇÃO INVÁLIDA!*\n" +
-          "Por favor, escolha uma das opções abaixo:"
+          "⚠️ *OPÇÃO INVÁLIDA!*\nPor favor, escolha uma das opções abaixo:"
         );
         await client.sendMessage(sender, mostrarOpcoes());
         break;
@@ -373,26 +347,16 @@ client.on('message', async message => {
     if (text === "1") {
       carrinhos[sender].estado = "aguardando_observacao";
       await client.sendMessage(sender, 
-        "✍️ *POR FAVOR, DIGITE SUA OBSERVAÇÃO:*\n" +
-        "Ex: Sem cebola, carne bem passada, etc."
+        "✍️ *POR FAVOR, DIGITE SUA OBSERVAÇÃO:*\nEx: Sem cebola, carne bem passada, etc."
       );
     } else if (text === "2") {
       carrinhos[sender].estado = "aguardando_endereco";
       await client.sendMessage(sender,
-        "🏠 *INFORME SEU ENDEREÇO*\n" +
-        "Por favor, envie:\n" +
-        "🧩  Rua, Número\n" +
-        "🏘️  Bairro\n" +
-        "📌  Ponto de referência\n" +
-        "🏆 Exemplo:\n" +
-        " Rua das Flores, 123    Bairro Centro     Próximo ao mercado"
+        "🏠 *INFORME SEU ENDEREÇO*\nPor favor, envie:\n🧩  Rua, Número\n🏘️  Bairro\n📌  Ponto de referência\n🏆 Exemplo:\nRua das Flores, 123    Bairro Centro     Próximo ao mercado"
       );
     } else {
       await client.sendMessage(sender, 
-        "❌ *OPÇÃO INVÁLIDA!*\n" +
-        "Por favor, digite:\n" +
-        "1. Sim\n" +
-        "2. Não"
+        "❌ *OPÇÃO INVÁLIDA!*\nPor favor, digite:\n1. Sim\n2. Não"
       );
     }
     return;
@@ -403,13 +367,7 @@ client.on('message', async message => {
     carrinhos[sender].estado = "aguardando_endereco";
     await client.sendMessage(sender, "✅ Observação salva com sucesso!");
     await client.sendMessage(sender,
-      "🏠 *INFORME SEU ENDEREÇO*\n" +
-      "Por favor, envie:\n" +
-      "🧩  Rua, Número\n" +
-      "🏘️  Bairro\n" +
-      "📌  Ponto de referência\n" +
-      "🏆 Exemplo:\n" +
-      " Rua das Flores, 123    Bairro Centro     Próximo ao mercado"
+      "🏠 *INFORME SEU ENDEREÇO*\nPor favor, envie:\n🧩  Rua, Número\n🏘️  Bairro\n📌  Ponto de referência\n🏆 Exemplo:\nRua das Flores, 123    Bairro Centro     Próximo ao mercado"
     );
     return;
   }
@@ -424,26 +382,17 @@ client.on('message', async message => {
         nomeCliente: carrinhos[sender].nomeCliente
       };
       await client.sendMessage(sender, 
-        "🗑️ *PEDIDO CANCELADO!*\n" +
-        "😢 Estamos tristes em vê-lo partir!\n" +
-        "⚡ Mas sempre que quiser voltar, estamos aqui!\n" +
-        "🔄 Digite *'cliente'* para recomeçar!"
+        "🗑️ *PEDIDO CANCELADO!*\n😢 Estamos tristes em vê-lo partir!\n⚡ Mas sempre que quiser voltar, estamos aqui!\n🔄 Digite *'cliente'* para recomeçar!"
       );
     } else if (text === "2") {
       carrinhos[sender].estado = "opcoes";
       await client.sendMessage(sender, 
-        "🎉 *PEDIDO MANTIDO!*\n" +
-        "🌟 Excelente escolha! Seu hambúrguer está salvo!\n" +
-        "👏 Continue com sua experiência gastronômica!\n" +
-        "💬 O que deseja fazer agora?"
+        "🎉 *PEDIDO MANTIDO!*\n🌟 Excelente escolha! Seu hambúrguer está salvo!\n👏 Continue com sua experiência gastronômica!\n💬 O que deseja fazer agora?"
       );
       await client.sendMessage(sender, mostrarOpcoes());
     } else {
       await client.sendMessage(sender, 
-        "❌ *OPÇÃO INVÁLIDA!*\n" +
-        "Por favor, escolha:\n" +
-        "1. ✅ Sim, cancelar tudo\n" +
-        "2. ❌ Não, quero continuar"
+        "❌ *OPÇÃO INVÁLIDA!*\nPor favor, escolha:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar"
       );
     }
     return;
@@ -483,15 +432,7 @@ client.on('message', async message => {
       if (text === "4") {
         carrinhos[sender].estado = "confirmando_cancelamento";
         await client.sendMessage(sender, 
-          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n" +
-          "🔥 Seu pedido está prestes a ser cancelado!\n" +
-          "Confirme se realmente deseja cancelar:\n" +
-          "________________________________\n" +
-          "🛑 *CONFIRME O CANCELAMENTO:*\n" +
-          "1. ✅ Sim, cancelar tudo\n" +
-          "2. ❌ Não, quero continuar\n" +
-          "________________________________\n" +
-          "🔢 Digite o número da opção:"
+          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n🔥 Seu pedido está prestes a ser cancelado!\nConfirme se realmente deseja cancelar:\n________________________________\n🛑 *CONFIRME O CANCELAMENTO:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar\n________________________________\n🔢 Digite o número da opção:"
         );
         return;
       }
@@ -499,19 +440,14 @@ client.on('message', async message => {
       if (text === "1") {
         carrinhos[sender].estado = "aguardando_troco";
         await client.sendMessage(sender, 
-          "💵 *Pagamento em dinheiro selecionado*\n" +
-          "🔄 Informe o valor para troco (ex: '50' ou 'não'):"
+          "💵 *Pagamento em dinheiro selecionado*\n🔄 Informe o valor para troco (ex: '50' ou 'não'):"
         );
       } else {
         await confirmarPedido(sender);
       }
     } else {
       await client.sendMessage(sender, 
-        "❌ Opção inválida! Digite:\n" +
-        "1. Dinheiro 💵\n" +
-        "2. PIX 📱\n" +
-        "3. Cartão 💳\n" +
-        "4. ❌ Cancelar pedido"
+        "❌ Opção inválida! Digite:\n1. Dinheiro 💵\n2. PIX 📱\n3. Cartão 💳\n4. ❌ Cancelar pedido"
       );
     }
     return;
@@ -535,10 +471,7 @@ async function confirmarPedido(sender) {
   };
   delete carrinhos[sender];
   await client.sendMessage(sender,
-    "✅ PEDIDO CONFIRMADO! 🚀\n" +
-    "*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n" +
-    "⏱ *Tempo estimado:* 40-50 minutos\n" +
-    "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
+    "✅ PEDIDO CONFIRMADO! 🚀\n*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n⏱ *Tempo estimado:* 40-50 minutos\n📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
   );
   await client.sendMessage(sender, 
     gerarCupomFiscal(
@@ -555,9 +488,7 @@ async function confirmarPedido(sender) {
   );
   setTimeout(async () => {
     await client.sendMessage(sender, 
-      "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!*\n" +
-      "🔔 Deve chegar em instantes!\n" +
-      "Se já recebeu, ignore esta mensagem."
+      "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!\n🔔 Deve chegar em instantes!\nSe já recebeu, ignore esta mensagem."
     );
   }, 30 * 60 * 1000);
 }
@@ -607,7 +538,6 @@ function responder(mensagem) {
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-
 app.get('/:page', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
