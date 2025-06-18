@@ -71,14 +71,19 @@ const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
 
 // Funções auxiliares
 function formatarTroco(troco) {
-  if (troco.toLowerCase() === 'não' || troco.toLowerCase() === 'nao') {
-    return 'não';
+  if (!troco || typeof troco !== 'string') return 'não';
+
+  const clean = troco.toLowerCase().trim();
+  if (clean === 'não' || clean === 'nao') return 'não';
+
+  const numeros = clean.replace(/[^\d.,]/g, '');
+  if (numeros) {
+    const valor = parseFloat(numeros.replace(',', '.'));
+    if (!isNaN(valor)) {
+      return `R$ ${valor.toFixed(2).replace('.', ',')}`;
+    }
   }
-  const numeros = troco.replace(/[^\d,.]/g, '').replace('.', ',');
-  const partes = numeros.split(',');
-  let inteiro = partes[0] || '0';
-  let centavos = partes[1] ? partes[1].padEnd(2, '0').slice(0, 2) : '00';
-  return `R$ ${inteiro},${centavos}`;
+  return 'não';
 }
 
 function calcularTotal(itens) {
@@ -111,22 +116,22 @@ function gerarCupomFiscal(itens, endereco, formaPagamento = null, troco = null, 
     const nomeSemEmoji = removerEmojis(item.nome);
     cupom += `• ${nomeSemEmoji.padEnd(35)} R$ ${formatarMoeda(item.preco)}\n`;
   });
-  if (observacao) {
-    cupom += "--------------------------------------------------\n";
-    cupom += "OBSERVAÇÃO:\n";
-    cupom += `${observacao}\n`;
-  }
   cupom += "--------------------------------------------------\n";
   cupom += `Subtotal:         R$ ${formatarMoeda(subtotal)}\n`;
   cupom += `Taxa de Entrega:  R$ ${formatarMoeda(taxaEntrega)}\n`;
   cupom += `TOTAL:            R$ ${formatarMoeda(total)}\n`;
+  cupom += "--------------------------------------------------\n";
   cupom += "ENDEREÇO:\n";
   cupom += `${endereco}\n`;
+  cupom += "--------------------------------------------------\n";
   cupom += "FORMA DE PAGAMENTO:\n";
   cupom += `${formaPagamento}\n`;
   if (formaPagamento === "1. Dinheiro 💵" && troco) {
-    cupom += `\nTroco para: ${formatarTroco(troco)}\n`;
+    cupom += `Troco para: ${formatarTroco(troco)}\n`;
   }
+  cupom += "--------------------------------------------------\n";
+  cupom += "OBSERVAÇÃO:\n";
+  cupom += `${observacao || "Nenhuma"}\n`;
   cupom += "==================================================\n";
   cupom += "           OBRIGADO PELA PREFERÊNCIA!";
   return cupom;
@@ -222,7 +227,11 @@ client.on('message', async message => {
       estado: "escolhendo", 
       ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, 
       atendenteTimer: null,
-      nomeCliente: carrinhos[sender].nomeCliente
+      nomeCliente: carrinhos[sender].nomeCliente,
+      endereco: null,
+      formaPagamento: null,
+      troco: null,
+      observacao: null
     };
     await client.sendMessage(sender, "🔄 *Reiniciando seu pedido...*");
     await client.sendMessage(sender, mostrarCardapio());
@@ -240,7 +249,6 @@ client.on('message', async message => {
     const numeroItem = parseInt(text);
     const todosItens = [...cardapio.lanches, ...cardapio.bebidas];
     const itemSelecionado = todosItens.find(item => item.id === numeroItem);
-
     if (itemSelecionado) {
       carrinhos[sender].itens.push(itemSelecionado);
       carrinhos[sender].estado = "opcoes";
@@ -350,13 +358,20 @@ client.on('message', async message => {
         "✍️ *POR FAVOR, DIGITE SUA OBSERVAÇÃO:*\nEx: Sem cebola, carne bem passada, etc."
       );
     } else if (text === "2") {
+      carrinhos[sender].observacao = null;
       carrinhos[sender].estado = "aguardando_endereco";
       await client.sendMessage(sender,
-        "🏠 *INFORME SEU ENDEREÇO*\nPor favor, envie:\n🧩  Rua, Número\n🏘️  Bairro\n📌  Ponto de referência\n🏆 Exemplo:\nRua das Flores, 123    Bairro Centro     Próximo ao mercado"
+        "🏠 *INFORME SEU ENDEREÇO*\n" +
+        "Por favor, envie:\n" +
+        "🧩  Rua, Número\n" +
+        "🏘️  Bairro\n" +
+        "📌  Ponto de referência\n\n" +
+        "🏆 *Exemplo:*\n" +
+        "Rua das Flores, 123    Bairro Centro    Próximo ao mercado"
       );
     } else {
       await client.sendMessage(sender, 
-        "❌ *OPÇÃO INVÁLIDA!*\nPor favor, digite:\n1. Sim\n2. Não"
+        "❌ *OPÇÃO INVÁLIDA!*\nDigite:\n1. Sim\n2. Não"
       );
     }
     return;
@@ -367,7 +382,13 @@ client.on('message', async message => {
     carrinhos[sender].estado = "aguardando_endereco";
     await client.sendMessage(sender, "✅ Observação salva com sucesso!");
     await client.sendMessage(sender,
-      "🏠 *INFORME SEU ENDEREÇO*\nPor favor, envie:\n🧩  Rua, Número\n🏘️  Bairro\n📌  Ponto de referência\n🏆 Exemplo:\nRua das Flores, 123    Bairro Centro     Próximo ao mercado"
+      "🏠 *INFORME SEU ENDEREÇO*\n" +
+      "Por favor, envie:\n" +
+      "🧩  Rua, Número\n" +
+      "🏘️  Bairro\n" +
+      "📌  Ponto de referência\n\n" +
+      "🏆 *Exemplo:*\n" +
+      "Rua das Flores, 123    Bairro Centro    Próximo ao mercado"
     );
     return;
   }
@@ -379,7 +400,11 @@ client.on('message', async message => {
         estado: "inicio", 
         ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, 
         atendenteTimer: null,
-        nomeCliente: carrinhos[sender].nomeCliente
+        nomeCliente: carrinhos[sender].nomeCliente,
+        endereco: null,
+        formaPagamento: null,
+        troco: null,
+        observacao: null
       };
       await client.sendMessage(sender, 
         "🗑️ *PEDIDO CANCELADO!*\n😢 Estamos tristes em vê-lo partir!\n⚡ Mas sempre que quiser voltar, estamos aqui!\n🔄 Digite *'cliente'* para recomeçar!"
@@ -454,7 +479,13 @@ client.on('message', async message => {
   }
 
   if (carrinhos[sender].estado === "aguardando_troco") {
-    carrinhos[sender].troco = text;
+    const trocoFormatado = formatarTroco(text);
+    if (trocoFormatado === 'não') {
+      carrinhos[sender].troco = 'Não informado';
+    } else {
+      carrinhos[sender].troco = trocoFormatado;
+    }
+
     await confirmarPedido(sender);
   }
 });
@@ -469,10 +500,13 @@ async function confirmarPedido(sender) {
     nomeCliente: carrinhos[sender].nomeCliente,
     telefone: sender
   };
+
   delete carrinhos[sender];
+
   await client.sendMessage(sender,
     "✅ PEDIDO CONFIRMADO! 🚀\n*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n⏱ *Tempo estimado:* 40-50 minutos\n📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
   );
+
   await client.sendMessage(sender, 
     gerarCupomFiscal(
       dadosPedido.itens, 
@@ -486,6 +520,7 @@ async function confirmarPedido(sender) {
       }
     )
   );
+
   setTimeout(async () => {
     await client.sendMessage(sender, 
       "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!\n🔔 Deve chegar em instantes!\nSe já recebeu, ignore esta mensagem."
@@ -538,6 +573,7 @@ function responder(mensagem) {
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
 app.get('/:page', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
