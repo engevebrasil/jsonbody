@@ -26,7 +26,12 @@ app.use(express.static('public'));
 // Inicialização do cliente WhatsApp
 const client = new Client({
   puppeteer: {
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disk-cache-size=10000000',     // Limite de 10MB para cache de disco
+      '--aggressive-cache-discard'      // Descarte seletivo de cache quando possível
+    ],
     headless: true,
     ignoreHTTPSErrors: true,
     defaultViewport: { width: 10, height: 10 }
@@ -72,10 +77,8 @@ const PDF_PATH = path.join(__dirname, 'public', 'cardapio.pdf');
 // Funções auxiliares
 function formatarTroco(troco) {
   if (!troco || typeof troco !== 'string') return 'não';
-
   const clean = troco.toLowerCase().trim();
   if (clean === 'não' || clean === 'nao') return 'não';
-
   const numeros = clean.replace(/[^\d.,]/g, '');
   if (numeros) {
     const valor = parseFloat(numeros.replace(',', '.'));
@@ -211,7 +214,7 @@ client.on('message', async message => {
     } else {
       carrinhos[sender].estado = "opcoes";
     }
-    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* 😃 Aberto das 18:00 às 23:00");
+    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* Cada mordida é uma explosão de felicidade. Preparado para essa experiência incrível? 😃 aberto das 18:00 as 23:00");
     await client.sendMessage(sender, mostrarOpcoes());
     return;
   }
@@ -303,19 +306,28 @@ client.on('message', async message => {
         }
         carrinhos[sender].estado = "perguntando_observacao";
         await client.sendMessage(sender,
-          "📝 *DESEJA ADICIONAR ALGUMA OBSERVAÇÃO?*\nEx: sem cebola, ponto da carne, etc.\n1. Sim\n2. Não\n🔢 Digite o número da opção:"
+          "📝 *DESEJA ADICIONAR ALGUMA OBSERVAÇÃO?*\n" +
+          "Ex: sem cebola, ponto da carne, etc.\n" +
+          "1. Sim\n2. Não\n🔢 Digite o número da opção:"
         );
         break;
       case "3":
         carrinhos[sender].estado = "confirmando_cancelamento";
         await client.sendMessage(sender, 
-          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n🔥 Seu pedido está indo para chapa!\nMas antes, confirme se realmente quer fazer isso...\nVocê perderá:\n• Hambúrgueres suculentos\n• Combos incríveis\n• Momentos de felicidade\n________________________________\n🛑 *CONFIRME O CANCELAMENTO:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar\n________________________________\n🔢 Digite o número da opção:"
+          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n" +
+          "🔥 Seu pedido está indo para chapa!\nMas antes, confirme se realmente quer fazer isso...\n" +
+          "Você perderá:\n• Hambúrgueres suculentos\n• Combos incríveis\n• Momentos de felicidade\n" +
+          "________________________________\n" +
+          "🛑 *CONFIRME O CANCELAMENTO:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar\n" +
+          "________________________________\n" +
+          "🔢 Digite o número da opção:"
         );
         break;
       case "4":
         carrinhos[sender].atendenteTimer = agora;
         await client.sendMessage(sender,
-          "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\nVocê será atendido por um de nossos especialistas em hambúrgueres!\n⏳ Tempo de atendimento: 10 minutos\n⏰ Após esse período, retornaremos ao modo automático"
+          "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\nVocê será atendido por um de nossos especialistas em hambúrgueres!\n" +
+          "⏳ Tempo de atendimento: 10 minutos\n⏰ Após esse período, retornaremos ao modo automático"
         );
         break;
       case "5":
@@ -381,13 +393,11 @@ client.on('message', async message => {
       carrinhos[sender].observacao = null;
       carrinhos[sender].estado = "aguardando_endereco";
       await client.sendMessage(sender,
-        "🏠 *INFORME SEU ENDEREÇO*\n" +
-        "Por favor, envie:\n" +
+        "🏠 *INFORME SEU ENDEREÇO*\nPor favor, envie:\n" +
         "🧩  Rua, Número\n" +
         "🏘️  Bairro\n" +
-        "📌  Ponto de referência\n\n" +
-        "🏆 *Exemplo:*\n" +
-        "Rua das Flores, 123    Bairro Centro    Próximo ao mercado"
+        "📌  Ponto de referência\n" +
+        "🏆 *Exemplo:* \nRua das Flores, 123    Bairro Centro    Próximo ao mercado"
       );
     } else {
       await client.sendMessage(sender, 
@@ -402,13 +412,11 @@ client.on('message', async message => {
     carrinhos[sender].estado = "aguardando_endereco";
     await client.sendMessage(sender, "✅ Observação salva com sucesso!");
     await client.sendMessage(sender,
-      "🏠 *INFORME SEU ENDEREÇO*\n" +
-      "Por favor, envie:\n" +
+      "🏠 *INFORME SEU ENDEREÇO*\nPor favor, envie:\n" +
       "🧩  Rua, Número\n" +
       "🏘️  Bairro\n" +
-      "📌  Ponto de referência\n\n" +
-      "🏆 *Exemplo:*\n" +
-      "Rua das Flores, 123    Bairro Centro    Próximo ao mercado"
+      "📌  Ponto de referência\n" +
+      "🏆 *Exemplo:* \nRua das Flores, 123    Bairro Centro    Próximo ao mercado"
     );
     return;
   }
@@ -449,12 +457,8 @@ client.on('message', async message => {
     const valorTotal = subtotal + taxaEntrega;
     await client.sendMessage(sender,
       "💳 *FORMA DE PAGAMENTO* 💳\n" +
-      `💰 *TOTAL DO PEDIDO: R$ ${formatarMoeda(valorTotal)}*\n` +
-      `(Itens: R$ ${formatarMoeda(subtotal)} + Entrega: R$ ${formatarMoeda(taxaEntrega)})\n` +
-      "1. Dinheiro 💵\n" +
-      "2. PIX 📱\n" +
-      "3. Cartão 💳\n" +
-      "4. ❌ Cancelar pedido\n" +
+      `💰 *TOTAL DO PEDIDO: R$ ${formatarMoeda(valorTotal)}*\n(Itens: R$ ${formatarMoeda(subtotal)} + Entrega: R$ ${formatarMoeda(taxaEntrega)})\n` +
+      "1. Dinheiro 💵\n2. PIX 📱\n3. Cartão 💳\n4. ❌ Cancelar pedido\n" +
       "🔢 Digite o número da opção:"
     );
     carrinhos[sender].estado = "escolhendo_pagamento";
@@ -472,7 +476,11 @@ client.on('message', async message => {
       if (text === "4") {
         carrinhos[sender].estado = "confirmando_cancelamento";
         await client.sendMessage(sender, 
-          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n🔥 Seu pedido está prestes a ser cancelado!\nConfirme se realmente deseja cancelar:\n________________________________\n🛑 *CONFIRME O CANCELAMENTO:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar\n________________________________\n🔢 Digite o número da opção:"
+          "⚠️ *CANCELAMENTO DE PEDIDO* ⚠️\n🔥 Seu pedido está prestes a ser cancelado!\nConfirme se realmente deseja cancelar:\n" +
+          "________________________________\n" +
+          "🛑 *CONFIRME O CANCELAMENTO:\n1. ✅ Sim, cancelar tudo\n2. ❌ Não, quero continuar\n" +
+          "________________________________\n" +
+          "🔢 Digite o número da opção:"
         );
         return;
       }
@@ -514,13 +522,10 @@ async function confirmarPedido(sender) {
     nomeCliente: carrinhos[sender].nomeCliente,
     telefone: sender
   };
-
   delete carrinhos[sender];
-
   await client.sendMessage(sender,
     "✅ PEDIDO CONFIRMADO! 🚀\n*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n⏱ *Tempo estimado:* 40-50 minutos\n📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
   );
-
   await client.sendMessage(sender, 
     gerarCupomFiscal(
       dadosPedido.itens, 
@@ -534,7 +539,6 @@ async function confirmarPedido(sender) {
       }
     )
   );
-
   setTimeout(async () => {
     await client.sendMessage(sender, 
       "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!\n🔔 Deve chegar em instantes!\nSe já recebeu, ignore esta mensagem."
@@ -585,7 +589,6 @@ function responder(mensagem) {
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-
 app.get('/:page', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
