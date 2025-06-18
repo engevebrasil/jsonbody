@@ -412,7 +412,7 @@ client.on('message', async message => {
     } else if (text === "2") {
       carrinhos[sender].estado = "opcoes";
       await client.sendMessage(sender, 
-        "🎉 *PEDIDO MANTIDO!*\n🌟 Excelente escolha! Seu hambúrguer está salvo!\n👏 Continue com sua experiência gastronômica!\n💬 O que deseja fazer agora?"
+        "🎉 *PEDIDO MANTIDO!*\n🌟 Excelente escolha! Seu PEDIDO está salvo!\n👏 Continue com sua experiência gastronômica!\n💬 para Finalizar sua compra digite 02"
       );
       await client.sendMessage(sender, mostrarOpcoes());
     } else {
