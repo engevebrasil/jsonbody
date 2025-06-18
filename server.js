@@ -5,7 +5,7 @@ const qrcode = require('qrcode-terminal');
 const { Client, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
 
-// Configuração simplificada de logs
+// Configuração de logs
 const logger = {
   info: (msg) => console.log(`[INFO] ${new Date().toISOString()} - ${msg}`),
   error: (msg) => console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`)
@@ -31,7 +31,7 @@ const client = new Client({
     ignoreHTTPSErrors: true,
     defaultViewport: { width: 10, height: 10 }
   },
-  session: fs.existsSync('./session.json') ? require('./session.json') : null,
+  session: fs.existsSync('./session.json') ? JSON.parse(fs.readFileSync('./session.json')) : null,
   restartOnConflict: true,
   takeoverOnConflict: true
 });
@@ -39,16 +39,16 @@ const client = new Client({
 // Estrutura para armazenar dados dos clientes
 let carrinhos = {};
 
-// Limpeza a cada 20 segundos
+// Limpeza de carrinhos inativos a cada 10 minutos
 setInterval(() => {
   const now = Date.now();
   for (const [sender, data] of Object.entries(carrinhos)) {
-    if (now - (data.ultimoEnvioPdf || now) > 20000) {
+    if (now - (data.ultimaInteracao || now) > 600000) { // 10 minutos
       delete carrinhos[sender];
-      logger.info(`🔄 Carrinho de ${sender} removido por inatividade`);
+      logger.info(`♻️ Carrinho de ${sender} removido por inatividade (10min)`);
     }
   }
-}, 20000);
+}, 300000); // Verificação a cada 5 minutos
 
 const cardapio = {
   lanches: [
@@ -199,16 +199,34 @@ client.on('message', async message => {
   const sender = message.from;
   const agora = Date.now();
 
+  // Tratamento especial para saudações
+  if (text.toLowerCase() === 'oi' || text.toLowerCase() === 'olá' || text.toLowerCase() === 'ola') {
+    if (!carrinhos[sender]) {
+      carrinhos[sender] = { 
+        itens: [], 
+        estado: "opcoes",
+        ultimaInteracao: agora,
+        nomeCliente: message._data.notifyName || "Cliente"
+      };
+    } else {
+      carrinhos[sender].estado = "opcoes";
+    }
+    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* 😃 Aberto das 18:00 às 23:00");
+    await client.sendMessage(sender, mostrarOpcoes());
+    return;
+  }
+
   // Captura nome do cliente na primeira mensagem
   if (!carrinhos[sender]) {
     carrinhos[sender] = { 
       itens: [], 
-      estado: "inicio", 
-      ultimoEnvioPdf: 0, 
-      atendenteTimer: null,
+      estado: "opcoes",
+      ultimaInteracao: agora,
       nomeCliente: message._data.notifyName || "Cliente"
     };
     logger.info(`👤 Novo cliente registrado: ${carrinhos[sender].nomeCliente} (${sender})`);
+  } else {
+    carrinhos[sender].ultimaInteracao = agora;
   }
 
   if (carrinhos[sender].atendenteTimer && (agora - carrinhos[sender].atendenteTimer < 600000)) {
@@ -225,13 +243,8 @@ client.on('message', async message => {
     carrinhos[sender] = { 
       itens: [], 
       estado: "escolhendo", 
-      ultimoEnvioPdf: carrinhos[sender]?.ultimoEnvioPdf || 0, 
-      atendenteTimer: null,
-      nomeCliente: carrinhos[sender].nomeCliente,
-      endereco: null,
-      formaPagamento: null,
-      troco: null,
-      observacao: null
+      ultimaInteracao: agora,
+      nomeCliente: carrinhos[sender].nomeCliente
     };
     await client.sendMessage(sender, "🔄 *Reiniciando seu pedido...*");
     await client.sendMessage(sender, mostrarCardapio());
@@ -240,7 +253,7 @@ client.on('message', async message => {
 
   if (carrinhos[sender].estado === "inicio" || carrinhos[sender].estado === "pos_compra") {
     carrinhos[sender].estado = "opcoes";
-    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* Cada mordida é uma explosão de felicidade. Preparado para essa experiência incrível? 😃 aberto das 18:00 as 23:00");
+    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* 😃 Aberto das 18:00 às 23:00");
     await client.sendMessage(sender, mostrarOpcoes());
     return;
   }
@@ -270,6 +283,13 @@ client.on('message', async message => {
   }
 
   if (carrinhos[sender].estado === "opcoes") {
+    const opcao = parseInt(text);
+    if (isNaN(opcao)) {
+      await client.sendMessage(sender, "⚠️ *OPÇÃO INVÁLIDA!*\nPor favor, digite apenas o número da opção desejada:");
+      await client.sendMessage(sender, mostrarOpcoes());
+      return;
+    }
+
     switch (text) {
       case "1":
         carrinhos[sender].estado = "escolhendo";
@@ -293,7 +313,7 @@ client.on('message', async message => {
         );
         break;
       case "4":
-        carrinhos[sender].atendenteTimer = Date.now();
+        carrinhos[sender].atendenteTimer = agora;
         await client.sendMessage(sender,
           "👨‍🍳 *ATENDENTE HUMANO ACIONADO!*\nVocê será atendido por um de nossos especialistas em hambúrgueres!\n⏳ Tempo de atendimento: 10 minutos\n⏰ Após esse período, retornaremos ao modo automático"
         );
@@ -398,13 +418,8 @@ client.on('message', async message => {
       carrinhos[sender] = { 
         itens: [], 
         estado: "inicio", 
-        ultimoEnvioPdf: carrinhos[sender].ultimoEnvioPdf, 
-        atendenteTimer: null,
-        nomeCliente: carrinhos[sender].nomeCliente,
-        endereco: null,
-        formaPagamento: null,
-        troco: null,
-        observacao: null
+        ultimaInteracao: agora,
+        nomeCliente: carrinhos[sender].nomeCliente
       };
       await client.sendMessage(sender, 
         "🗑️ *PEDIDO CANCELADO!*\n😢 Estamos tristes em vê-lo partir!\n⚡ Mas sempre que quiser voltar, estamos aqui!\n🔄 Digite *'cliente'* para recomeçar!"
@@ -485,7 +500,6 @@ client.on('message', async message => {
     } else {
       carrinhos[sender].troco = trocoFormatado;
     }
-
     await confirmarPedido(sender);
   }
 });
@@ -541,9 +555,7 @@ client.on('disconnected', async (reason) => {
   }
 });
 
-client.initialize();
-
-// Rota da API para o chat web
+// Rotas da API
 app.post('/api/chat', (req, res) => {
   try {
     const userMessage = req.body.message;
@@ -579,6 +591,7 @@ app.get('/:page', (req, res) => {
 });
 
 // Iniciar servidor
+client.initialize();
 app.listen(PORT, () => {
   logger.info(`🤖 Bot WhatsApp e servidor web rodando na porta ${PORT}`);
   logger.info(`🌐 Acesse: http://localhost:${PORT}`);
