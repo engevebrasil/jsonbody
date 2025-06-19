@@ -57,18 +57,18 @@ setInterval(() => {
 
 const cardapio = {
   lanches: [
-    { id: 1, nome: " Smash Burger Clássico", preco: 20.00 },
-    { id: 2, nome: " Smash! Salada", preco: 23.00 },
-    { id: 3, nome: " Salada Bacon", preco: 27.00 },
-    { id: 4, nome: " Smash!! Triple", preco: 28.00 },
-    { id: 5, nome: " Smash Burger Bacon", preco: 29.99 },
-    { id: 6, nome: " Burger Calabacon", preco: 32.99 }
+    { id: 1, nome: "Smash Burger Clássico", preco: 20.00 },
+    { id: 2, nome: "Smash! Salada", preco: 23.00 },
+    { id: 3, nome: "Salada Bacon", preco: 27.00 },
+    { id: 4, nome: "Smash!! Triple", preco: 28.00 },
+    { id: 5, nome: "Smash Burger Bacon", preco: 29.99 },
+    { id: 6, nome: "Burger Calabacon", preco: 32.99 }
   ],
   bebidas: [
-    { id: 7, nome: " Coca-Cola 2L", preco: 12.00 },
-    { id: 8, nome: " Poty Guaraná 2L", preco: 10.00 },
-    { id: 9, nome: " Coca-Cola Lata", preco: 6.00 },
-    { id: 10, nome: " Guaraná Lata", preco: 6.00 }
+    { id: 7, nome: "Coca-Cola 2L", preco: 12.00 },
+    { id: 8, nome: "Poty Guaraná 2L", preco: 10.00 },
+    { id: 9, nome: "Coca-Cola Lata", preco: 6.00 },
+    { id: 10, nome: "Guaraná Lata", preco: 6.00 }
   ]
 };
 
@@ -214,7 +214,7 @@ client.on('message', async message => {
     } else {
       carrinhos[sender].estado = "opcoes";
     }
-    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* Cada mordida é uma explosão de felicidade. Preparado para essa experiência incrível? 😃 aberto das 18:00 as 23:00");
+    await client.sendMessage(sender, "🍔🔥 *Bem-vindo ao nosso universo de sabor!* Cada mordida é uma explosão de felicidade. Preparado para essa experiência incrível? 😃 Aberto das 18:00 às 23:00");
     await client.sendMessage(sender, mostrarOpcoes());
     return;
   }
@@ -435,7 +435,7 @@ client.on('message', async message => {
     } else if (text === "2") {
       carrinhos[sender].estado = "opcoes";
       await client.sendMessage(sender, 
-        "🎉 *PEDIDO MANTIDO!*\n🌟 Excelente escolha! Seu PEDIDO está salvo!\n👏 Continue com sua experiência gastronômica!\n💬 para Finalizar sua compra digite 02"
+        "🎉 *PEDIDO MANTIDO!*\n🌟 Excelente escolha! Seu PEDIDO está salvo!\n👏 Continue com sua experiência gastronômica!\n💬 Para Finalizar sua compra digite 02"
       );
       await client.sendMessage(sender, mostrarOpcoes());
     } else {
@@ -522,10 +522,16 @@ async function confirmarPedido(sender) {
     nomeCliente: carrinhos[sender].nomeCliente,
     telefone: sender
   };
+
   delete carrinhos[sender];
+
   await client.sendMessage(sender,
-    "✅ PEDIDO CONFIRMADO! 🚀\n*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n⏱ *Tempo estimado:* 40-50 minutos\n📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
+    "✅ PEDIDO CONFIRMADO! 🚀\n" +
+    "*Sua explosão de sabores está INDO PARA CHAPA🔥️!!! 😋️🍔*\n" +
+    "⏱ *Tempo estimado:* 40-50 minutos\n" +
+    "📱 *Acompanharemos seu pedido e avisaremos quando sair para entrega!*"
   );
+
   await client.sendMessage(sender, 
     gerarCupomFiscal(
       dadosPedido.itens, 
@@ -539,6 +545,7 @@ async function confirmarPedido(sender) {
       }
     )
   );
+
   setTimeout(async () => {
     await client.sendMessage(sender, 
       "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!\n🔔 Deve chegar em instantes!\nSe já recebeu, ignore esta mensagem."
@@ -589,6 +596,7 @@ function responder(mensagem) {
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+
 app.get('/:page', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
