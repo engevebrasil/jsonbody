@@ -498,7 +498,7 @@ async function confirmarPedido(sender) {
   ));
 
   setTimeout(async () => {
-    await client.sendMessage(sender, "🛵 *😋️ SEU PEDIDO ESTÁ A CAMINHO!* 🔔 Deve chegar em instantes!");
+    await client.sendMessage(sender, "🛵 *😋️ SEU PEDIDO ESTÁ A CAMINHO!* 🔔 Deve chegar em 10 a 15 min!");
   }, 30 * 60 * 1000);
 }
 
