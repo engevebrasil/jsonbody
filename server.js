@@ -4,6 +4,8 @@ const path = require('path');
 const qrcode = require('qrcode-terminal');
 const { Client, MessageMedia } = require('whatsapp-web.js');
 const fs = require('fs');
+const { sanitizeInput } = require('./utils/validateInput'); // Adicionado para sanitização
+const sanitizeBody = require('./middlewares/sanitizeExpress'); // Adicionado para middleware
 
 // Configuração de logs
 const logger = {
@@ -21,6 +23,7 @@ const PORT = process.env.PORT || 3000;
 
 // Middlewares
 app.use(bodyParser.json());
+app.use(sanitizeBody); // Adicionado para sanitização de input nas rotas Express
 app.use(express.static('public'));
 
 // Inicialização do cliente WhatsApp
@@ -43,6 +46,10 @@ const client = new Client({
 
 // Estrutura para armazenar dados dos clientes
 let carrinhos = {};
+
+// --- ANTI-SPAM ---
+const antiSpam = {};
+// --- FIM ANTI-SPAM ---
 
 // Limpeza de carrinhos inativos a cada 10 minutos
 setInterval(() => {
@@ -198,9 +205,53 @@ client.on('ready', () => {
 });
 
 client.on('message', async message => {
-  const text = message.body.trim();
+  const text = sanitizeInput(message.body.trim());
   const sender = message.from;
   const agora = Date.now();
+
+  // --- ANTI-SPAM ---
+  if (!antiSpam[sender]) {
+    antiSpam[sender] = { count: 0, lastReset: agora, warned: false, blocked: false };
+  }
+  const spamWindow = 10000; // 10 segundos
+  const spamLimit = 6;
+
+  if (agora - antiSpam[sender].lastReset > spamWindow) {
+    antiSpam[sender].count = 0;
+    antiSpam[sender].lastReset = agora;
+    antiSpam[sender].warned = false;
+    antiSpam[sender].blocked = false;
+  }
+
+  if (antiSpam[sender].blocked) {
+    await client.sendMessage(sender, "🚫 Você foi bloqueado por spam. Aguarde 10 segundos para tentar novamente.");
+    return;
+  }
+
+  antiSpam[sender].count++;
+
+  if (antiSpam[sender].count > spamLimit && !antiSpam[sender].warned) {
+    antiSpam[sender].warned = true;
+    await client.sendMessage(sender, "⚠️ Detectamos muitas mensagens! Aguarde 10 segundos antes de enviar novamente ou você será bloqueado temporariamente.");
+    setTimeout(() => {
+      antiSpam[sender].warned = false;
+      antiSpam[sender].count = 0;
+      antiSpam[sender].lastReset = Date.now();
+    }, 10000);
+    return;
+  }
+
+  if (antiSpam[sender].count > spamLimit && antiSpam[sender].warned) {
+    antiSpam[sender].blocked = true;
+    await client.sendMessage(sender, "🚫 Você foi bloqueado por spam. Aguarde 10 segundos para tentar novamente.");
+    setTimeout(() => {
+      antiSpam[sender].blocked = false;
+      antiSpam[sender].count = 0;
+      antiSpam[sender].lastReset = Date.now();
+    }, 10000);
+    return;
+  }
+  // --- FIM ANTI-SPAM ---
 
   // Tratamento especial para saudações
   if (text.toLowerCase() === 'oi' || text.toLowerCase() === 'olá' || text.toLowerCase() === 'ola') {
@@ -567,9 +618,9 @@ async function confirmarPedido(sender) {
 
   setTimeout(async () => {
     await client.sendMessage(sender, 
-      "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!\n🔔 Deve chegar em 10 a 15 minutinhos!\nSe já recebeu, ignore esta mensagem."
+      "🛵 *😋️OIEEE!!! SEU PEDIDO ESTÁ A CAMINHO!\n🔔 Deve chegar em instantes!\nSe já recebeu, ignore esta mensagem."
     );
-  }, 35 * 60 * 1000);
+  }, 30 * 60 * 1000);
 }
 
 // Tratamento de desconexão
